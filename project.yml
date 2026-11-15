@@ -1,0 +1,21 @@
+name: ClipSpark
+options:
+  bundleIdPrefix: com.clipspark
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+targets:
+  ClipSpark:
+    type: application
+    platform: iOS
+    sources:
+      - ClipSpark
+    settings:
+      base:
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "ClipSpark needs access to your photo library so you can import videos to edit."
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Automatic
