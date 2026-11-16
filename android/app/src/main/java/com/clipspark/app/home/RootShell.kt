@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipspark.app.designsystem.*
+import com.clipspark.app.drafts.DraftStore
 import com.clipspark.app.editor.EditorScreen
 import com.clipspark.app.editor.EditorViewModel
 import com.clipspark.app.templates.ClipTemplate
@@ -40,6 +41,11 @@ fun RootShell() {
         return
     }
 
+    // Drafts list refreshes when you come back from the editor
+    var draftsKey by remember { mutableStateOf(0) }
+    LaunchedEffect(editing) { if (!editing) draftsKey++ }
+    val drafts = remember(draftsKey) { DraftStore.list(context) }
+
     Column(Modifier.fillMaxSize().background(CS.BG)) {
         when (tab) {
             0 -> HomeScreen(
@@ -55,7 +61,18 @@ fun RootShell() {
                     }
                     editing = true
                 },
-                templates = templates
+                templates = templates,
+                drafts = drafts,
+                onOpenDraft = { name ->
+                    DraftStore.restore(context, name)?.let {
+                        editorModel = it
+                        editing = true
+                    }
+                },
+                onDeleteDraft = { name ->
+                    DraftStore.delete(context, name)
+                    draftsKey++
+                }
             )
             1 -> TemplatesScreen(templates)
             else -> SettingsScreen()
@@ -79,6 +96,9 @@ private fun HomeScreen(
     onNewProject: (List<String>) -> Unit,
     onUseTemplate: (ClipTemplate, List<String>) -> Unit,
     templates: List<ClipTemplate>,
+    drafts: List<String>,
+    onOpenDraft: (String) -> Unit,
+    onDeleteDraft: (String) -> Unit,
 ) {
     val pickVideos = rememberVideoPicker(
         onPicked = { uris -> onNewProject(uris.map { it.toString() }) }
@@ -121,6 +141,27 @@ private fun HomeScreen(
                 ) {
                     Text(template.name, fontSize = 14.sp, color = CS.TextPrimary)
                     Text("${template.uses} uses", fontSize = 11.sp, color = CS.TextSecondary)
+                }
+            }
+        }
+        Spacer(16.dp)
+        Text("Drafts", fontSize = 17.sp, color = CS.TextPrimary)
+        Spacer(8.dp)
+        if (drafts.isEmpty()) {
+            Text("No drafts yet. Save one from the editor's toolbar.",
+                fontSize = 12.sp, color = CS.TextSecondary)
+        } else {
+            drafts.forEach { name ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        name,
+                        fontSize = 14.sp, color = CS.TextPrimary,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onOpenDraft(name) }
+                    )
+                    Text("✕", fontSize = 13.sp, color = CS.TextSecondary,
+                        modifier = Modifier.clickable { onDeleteDraft(name) })
                 }
             }
         }

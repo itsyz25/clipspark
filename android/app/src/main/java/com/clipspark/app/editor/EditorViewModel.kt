@@ -62,6 +62,12 @@ class EditorViewModel : ViewModel() {
     var look = Look()
     var timecodeMs by mutableStateOf(0L); private set
     fun updateTimecode(ms: Long) { timecodeMs = ms }
+
+    /** Rebuild state from a saved draft (DraftStore). */
+    fun loadDraft(clips: List<ClipSegment>, overlays: List<EditorOverlay>) {
+        this.clips = clips
+        this.overlays = overlays
+    }
     var selectedClipId by mutableStateOf<Long?>(null)
     var canUndo by mutableStateOf(false); private set
     var canRedo by mutableStateOf(false); private set

@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import com.clipspark.app.designsystem.*
+import com.clipspark.app.drafts.DraftStore
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -52,6 +53,7 @@ fun EditorScreen(
     var exportState by remember { mutableStateOf<ExportUi?>(null) }
     var isPlayingState by remember { mutableStateOf(false) }
     var drawer by remember { mutableStateOf<EditorDrawer?>(null) }
+    var draftSaved by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(Unit) { onDispose { playback.release() } }
 
@@ -73,6 +75,10 @@ fun EditorScreen(
             exportState = exportState?.copy(progress = exporter.pollProgress())
             delay(250)
         }
+    }
+    // Brief "Saved ✓" feedback for drafts
+    LaunchedEffect(draftSaved) {
+        if (draftSaved != null) { delay(1500); draftSaved = null }
     }
 
     Column(
@@ -126,9 +132,20 @@ fun EditorScreen(
             Spacer(16.dp)
             Icon(CSIcons.Split, "Split at playhead", tint = CS.TextPrimary,
                 modifier = Modifier.clickable { model.splitAt(model.timecodeMs) })
+            Spacer(12.dp)
+            Icon(CSIcons.Drafts, "Save draft", tint = CS.TextPrimary,
+                modifier = Modifier.clickable {
+                    val name = "Draft ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())}"
+                    DraftStore.save(context, model, name)
+                    draftSaved = name
+                })
             Spacer(Modifier.weight(1f))
             Text("${model.timecodeText()} / ${model.timecodeText(model.totalMs())}",
                 color = CS.Accent, fontSize = 11.sp)
+            draftSaved?.let {
+                Spacer(Modifier.width(8.dp))
+                Text("Saved ✓", color = CS.Success, fontSize = 11.sp)
+            }
             Spacer(Modifier.weight(1f))
             Icon(CSIcons.Export, "Export", tint = CS.Accent,
                 modifier = Modifier.clickable {
