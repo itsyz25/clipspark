@@ -18,18 +18,24 @@ jobs:
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
 
       - name: Build debug APK (installable, offline — no INTERNET permission)
         run: |
-          gradle wrapper --gradle-version 8.11.1
-          ./gradlew assembleDebug --no-daemon
+          set -o pipefail
+          gradle assembleDebug --no-daemon 2>&1 | tee build.log
         working-directory: android
 
       - name: Surface build errors
         if: failure()
         working-directory: android
         run: |
-          gradle assembleDebug --no-daemon 2>&1 | grep -E "error|e: " | head -40 || true
+          grep -E "^e: |error:" build.log | head -40 > errs.txt || true
+          while IFS= read -r line; do echo "::error::$line"; done < errs.txt
+          if [ ! -s errs.txt ]; then
+            tail -50 build.log | while IFS= read -r line; do echo "::error::$line"; done
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
