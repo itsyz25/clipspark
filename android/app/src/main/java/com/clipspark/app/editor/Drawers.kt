@@ -1,10 +1,13 @@
 package com.clipspark.app.editor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
@@ -37,7 +40,7 @@ fun TextDrawer(model: EditorViewModel, onClose: () -> Unit) {
     DrawerShell("Text", onClose) {
         Text("Type text, tap Add.", fontSize = 12.sp, color = CS.TextSecondary,
             modifier = Modifier.padding(horizontal = 16.dp))
-        androidx.compose.material3.BasicTextField(
+        BasicTextField(
             value = draft,
             onValueChange = { draft = it },
             textStyle = androidx.compose.ui.text.TextStyle(

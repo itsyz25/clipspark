@@ -126,13 +126,13 @@ fun EditorScreen(
             Spacer(Modifier.width(12.dp))
             Icon(CSIcons.Undo, null, tint = if (model.canUndo) CS.TextPrimary else CS.TextSecondary,
                 modifier = Modifier.clickable { model.undo() })
-            Spacer(8.dp)
+            Spacer(Modifier.width(8.dp))
             Icon(CSIcons.Redo, null, tint = if (model.canRedo) CS.TextPrimary else CS.TextSecondary,
                 modifier = Modifier.clickable { model.redo() })
-            Spacer(16.dp)
+            Spacer(Modifier.width(16.dp))
             Icon(CSIcons.Split, "Split at playhead", tint = CS.TextPrimary,
                 modifier = Modifier.clickable { model.splitAt(model.timecodeMs) })
-            Spacer(12.dp)
+            Spacer(Modifier.width(12.dp))
             Icon(CSIcons.Drafts, "Save draft", tint = CS.TextPrimary,
                 modifier = Modifier.clickable {
                     val name = "Draft ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())}"
@@ -165,7 +165,7 @@ fun EditorScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Spacer(8.dp)
+            Spacer(Modifier.width(8.dp))
             CSToolChip(CSIcons.Edit, "Edit") {
                 model.selectedClipId ?: model.clips.firstOrNull()?.id?.let(model::select)
                 drawer = EditorDrawer.INSPECTOR
@@ -175,7 +175,7 @@ fun EditorScreen(
             CSToolChip(CSIcons.Filter, "Filters") { drawer = EditorDrawer.FILTER }
             CSToolChip(CSIcons.Transitions, "Transitions") { drawer = EditorDrawer.TRANSITIONS }
             CSToolChip(CSIcons.Audio, "Audio") { drawer = EditorDrawer.AUDIO }
-            Spacer(8.dp)
+            Spacer(Modifier.width(8.dp))
         }
 
         // 5. Drawer layer
@@ -288,5 +288,75 @@ private fun saveToGallery(context: Context, file: File) {
         resolver.update(uri, values, null, null)
     } catch (e: Exception) {
         // Non-fatal: the file still exists in the app's Movies directory.
+    }
+}
+
+/**
+ * Horizontal film strip with a fixed center playhead (CapCut-style).
+ * Block width ∝ clip timeline duration; tap selects (again to deselect).
+ * Selected clip shows a teal outline + speed badge.
+ */
+@Composable
+private fun TimelineRow(model: EditorViewModel) {
+    val pxPerSecond = 48.dp
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(76.dp)
+            .background(CS.BG)
+    ) {
+        // Fixed center playhead
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .width(2.dp)
+                .fillMaxHeight()
+                .background(CS.Accent)
+        )
+        Row(
+            Modifier
+                .fillMaxSize()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            model.clips.forEach { clip ->
+                val selected = clip.id == model.selectedClipId
+                Column(
+                    Modifier
+                        .width(((clip.timelineDurationMs / 1000f) * pxPerSecond.value)
+                            .dp.coerceIn(44.dp, 240.dp))
+                        .fillMaxHeight()
+                        .background(
+                            if (selected) CS.SurfaceHigh else CS.Surface,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            if (selected) 2.dp else 1.dp,
+                            if (selected) CS.Accent else CS.Hairline,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable {
+                            model.select(if (selected) null else clip.id)
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        clip.durationText(),
+                        fontSize = 10.sp,
+                        color = CS.TextSecondary,
+                        modifier = Modifier.padding(4.dp)
+                    )
+                    if (clip.speed != 1.0) {
+                        Text("%.2f×".format(clip.speed), fontSize = 9.sp, color = CS.Accent)
+                    }
+                    if (clip.muted) {
+                        Text("🔇", fontSize = 9.sp, color = CS.TextSecondary)
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+        }
     }
 }

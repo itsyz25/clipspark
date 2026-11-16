@@ -38,7 +38,8 @@ data class ClipSegment(
 
 data class EditorOverlay(
     val id: Long,
-    val text: String? = null,      // null → sticker (material symbol name)
+    val text: String? = null,      // text overlay content
+    val sticker: String? = null,   // emoji glyph for sticker overlays
     val colorArgb: Long = 0xFFFFFFFF,
     val fontSize: Float = 20f,
     val x: Float = 0.5f,
@@ -50,6 +51,9 @@ data class Look(
     var contrast: Float = 1f,      // 0.5..1.5
     var saturation: Float = 1f,    // 0..2
 )
+
+/** Which bottom drawer is open in the editor screen. */
+enum class EditorDrawer { INSPECTOR, TEXT, STICKER, FILTER, TRANSITIONS, AUDIO }
 
 /**
  * Editing core: snapshot-based undo (clips + overlays, 50 steps), the same
@@ -175,6 +179,19 @@ class EditorViewModel : ViewModel() {
 
     fun addText(text: String) {
         overlays = overlays + EditorOverlay(System.nanoTime(), text = text)
+    }
+
+    /** Sticker set — emoji glyphs bundled with the OS, no network assets. */
+    companion object {
+        val stickerCatalog: List<Pair<String, String>> = listOf(
+            "😀" to "Happy", "😎" to "Cool", "❤️" to "Heart", "⭐" to "Star",
+            "⚡" to "Bolt", "🔥" to "Fire", "👍" to "Nice", "✅" to "Check",
+            "😴" to "Zzz", "🎵" to "Note", "✨" to "Sparkle", "👑" to "Crown",
+        )
+    }
+
+    fun addSticker(symbol: String) {
+        overlays = overlays + EditorOverlay(System.nanoTime(), text = null, sticker = symbol)
     }
 
     fun deleteOverlay(overlayId: Long) {

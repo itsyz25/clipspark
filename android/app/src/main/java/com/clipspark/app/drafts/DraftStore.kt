@@ -49,6 +49,15 @@ object DraftStore {
                         .put("size", o.fontSize.toDouble())
                 )
             }
+            o.sticker?.let { s ->
+                overlays.put(
+                    JSONObject()
+                        .put("sticker", s)
+                        .put("x", o.x.toDouble())
+                        .put("y", o.y.toDouble())
+                        .put("size", o.fontSize.toDouble())
+                )
+            }
         }
         json.put("overlays", overlays)
         return try {
@@ -101,13 +110,23 @@ object DraftStore {
             for (i in 0 until overlaysArray.length()) {
                 val o = overlaysArray.getJSONObject(i)
                 overlays.add(
-                    EditorOverlay(
-                        id = id++,
-                        text = o.getString("text"),
-                        x = o.getDouble("x").toFloat(),
-                        y = o.getDouble("y").toFloat(),
-                        fontSize = o.getDouble("size").toFloat(),
-                    )
+                    if (o.has("sticker")) {
+                        EditorOverlay(
+                            id = id++,
+                            sticker = o.getString("sticker"),
+                            x = o.getDouble("x").toFloat(),
+                            y = o.getDouble("y").toFloat(),
+                            fontSize = o.getDouble("size").toFloat(),
+                        )
+                    } else {
+                        EditorOverlay(
+                            id = id++,
+                            text = o.getString("text"),
+                            x = o.getDouble("x").toFloat(),
+                            y = o.getDouble("y").toFloat(),
+                            fontSize = o.getDouble("size").toFloat(),
+                        )
+                    }
                 )
             }
             EditorViewModel().also { it.loadDraft(clips, overlays) }
