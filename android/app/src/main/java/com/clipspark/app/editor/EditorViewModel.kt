@@ -1,5 +1,8 @@
 package com.clipspark.app.editor
 
+import android.content.Context
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -58,6 +61,7 @@ class EditorViewModel : ViewModel() {
     var overlays by mutableStateOf<List<EditorOverlay>>(emptyList())
     var look = Look()
     var timecodeMs by mutableStateOf(0L); private set
+    fun updateTimecode(ms: Long) { timecodeMs = ms }
     var selectedClipId by mutableStateOf<Long?>(null)
     var canUndo by mutableStateOf(false); private set
     var canRedo by mutableStateOf(false); private set
@@ -65,16 +69,29 @@ class EditorViewModel : ViewModel() {
     private var undoStack = mutableListOf<List<ClipSegment>>()
     private var redoStack = mutableListOf<List<ClipSegment>>()
 
-    fun load(uris: List<String>, speeds: List<Double> = emptyList(), transition: CSTransition = CSTransition.NONE) {
+    fun load(context: Context, uris: List<String>, speeds: List<Double> = emptyList(), transition: CSTransition = CSTransition.NONE) {
         var id = 0L; var cursor = 0L
         clips = uris.mapIndexed { index, uri ->
             val speed = if (speeds.isNotEmpty()) speeds[index % speeds.size] else 1.0
-            // Real duration comes from MediaMetadataRetriever at playback attach;
-            // placeholder until then keeps the model consistent.
-            val clip = ClipSegment(id++, uri, 0, 5000, speed, transitionIn = if (index == 0) CSTransition.NONE else transition)
+            // Real duration, read on-device with MediaMetadataRetriever (offline).
+            val durationMs = videoDurationMs(context, uri)
+            val clip = ClipSegment(id++, uri, 0, durationMs, speed, transitionIn = if (index == 0) CSTransition.NONE else transition)
             clip.startMs = cursor; clip.endMs = cursor + clip.timelineDurationMs
             cursor = clip.endMs
             clip
+        }
+    }
+
+    private fun videoDurationMs(context: Context, uri: String): Long {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, Uri.parse(uri))
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 5000L
+        } catch (e: Exception) {
+            5000L
+        } finally {
+            try { retriever.release() } catch (e: Exception) { }
         }
     }
 

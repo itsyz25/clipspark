@@ -35,15 +35,48 @@ fun DrawerShell(title: String, onClose: () -> Unit, content: @Composable ColumnS
 fun TextDrawer(model: EditorViewModel, onClose: () -> Unit) {
     var draft by remember { mutableStateOf("") }
     DrawerShell("Text", onClose) {
-        Text("Type text, tap Add. Drag overlay position on the canvas.", fontSize = 12.sp, color = CS.TextSecondary,
+        Text("Type text, tap Add.", fontSize = 12.sp, color = CS.TextSecondary,
             modifier = Modifier.padding(horizontal = 16.dp))
-        Text(draft, fontSize = 14.sp, color = CS.TextPrimary,
-            modifier = Modifier.padding(16.dp))
+        androidx.compose.material3.BasicTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            textStyle = androidx.compose.ui.text.TextStyle(
+                color = CS.TextPrimary, fontSize = 15.sp
+            ),
+            modifier = Modifier
+                .padding(16.dp)
+                .fillMaxWidth()
+                .background(CS.Surface, RoundedCornerShape(10.dp))
+                .padding(12.dp)
+        )
         Row(Modifier.padding(horizontal = 16.dp)) {
             CSPrimaryButton("Add", CSIcons.Text) {
                 if (draft.isNotBlank()) { model.addText(draft); draft = "" }
             }
         }
+    }
+}
+
+@Composable
+fun StickerDrawer(model: EditorViewModel, onClose: () -> Unit) {
+    DrawerShell("Stickers", onClose) {
+        LazyRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(EditorViewModel.stickerCatalog) { (symbol, label) ->
+                Column(
+                    Modifier
+                        .clickable { model.addSticker(symbol) }
+                        .background(CS.Surface, RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(symbol, fontSize = 20.sp)
+                    Text(label, fontSize = 10.sp, color = CS.TextSecondary)
+                }
+            }
+        }
+        Text("Stickers render in export in a later update; they preview on the clip block list today.",
+            fontSize = 11.sp, color = CS.TextSecondary,
+            modifier = Modifier.padding(16.dp))
     }
 }
 

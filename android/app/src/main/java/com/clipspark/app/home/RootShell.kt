@@ -25,16 +25,17 @@ import com.clipspark.app.templates.ClipTemplate
 
 @Composable
 fun RootShell() {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var tab by remember { mutableStateOf(0) }
     var editing by remember { mutableStateOf(false) }
     var editorModel by remember { mutableStateOf<EditorViewModel?>(null) }
+    var pendingTemplate by remember { mutableStateOf<ClipTemplate?>(null) }
     val templates = remember { ClipTemplate.catalog }
 
     if (editing && editorModel != null) {
         EditorScreen(
             model = editorModel!!,
             onBack = { editing = false; editorModel = null },
-            onExport = { /* Unit 8 Android export sheet */ }
         )
         return
     }
@@ -42,10 +43,13 @@ fun RootShell() {
     Column(Modifier.fillMaxSize().background(CS.BG)) {
         when (tab) {
             0 -> HomeScreen(
-                onNewProject = { uris -> editorModel = EditorViewModel().also { it.load(uris) }; editing = true },
+                onNewProject = { uris ->
+                    editorModel = EditorViewModel().also { it.load(context, uris) }
+                    editing = true
+                },
                 onUseTemplate = { template, uris ->
                     editorModel = EditorViewModel().also {
-                        it.load(uris, speeds = List(uris.size) { i -> template.speedAt(i) },
+                        it.load(context, uris, speeds = List(uris.size) { i -> template.speedAt(i) },
                             transition = template.transitionIn)
                         template.titleOverlay?.let { t -> it.addText(t) }
                     }
@@ -79,7 +83,19 @@ private fun HomeScreen(
     val pickVideos = rememberVideoPicker(
         onPicked = { uris -> onNewProject(uris.map { it.toString() }) }
     )
-    val pickForTemplate = rememberVideoPicker(onPicked = { /* template flow handled by state */ })
+    val pickForTemplate = rememberVideoPicker(onPicked = { uris ->
+        val template = pendingTemplate
+        pendingTemplate = null
+        if (template != null && uris.isNotEmpty()) {
+            editorModel = EditorViewModel().also {
+                it.load(context, uris.map { u -> u.toString() },
+                    speeds = List(uris.size) { i -> template.speedAt(i) },
+                    transition = template.transitionIn)
+                template.titleOverlay?.let { t -> it.addText(t) }
+            }
+            editing = true
+        }
+    })
 
     Column(
         Modifier
@@ -96,7 +112,8 @@ private fun HomeScreen(
             items(templates) { template ->
                 Column(
                     Modifier.clickable {
-                        // Template flow: pick clips, then apply recipe
+                        // Template flow: remember the recipe, then pick clips
+                        pendingTemplate = template
                         pickForTemplate()
                     }
                         .background(CS.SurfaceHigh, androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
