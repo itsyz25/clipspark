@@ -92,7 +92,7 @@ struct TextDrawer: View {
     private func add() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        var overlay = EditorOverlay(kind: .text(trimmed))
+        var overlay = EditorViewModel.EditorOverlay(kind: .text(trimmed))
         if let nextColor { overlay.color = nextColor }
         draft = ""
         model.mutateOverlays { $0.append(overlay) } // one undo step
