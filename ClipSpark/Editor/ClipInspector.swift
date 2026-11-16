@@ -4,7 +4,7 @@ import SwiftUI
 /// (Volume/animation/adjust arrive with the Unit-6 drawers.)
 struct ClipInspector: View {
     @ObservedObject var model: EditorViewModel
-    let clip: ClipSegment
+    let clip: EditorViewModel.ClipSegment
 
     @State private var speed: Double = 1.0
 

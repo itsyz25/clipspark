@@ -82,7 +82,7 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: - Published state
 
-    @Published private(set) var clips: [ClipSegment] = []
+    @Published var clips: [ClipSegment] = []
     @Published var overlays: [EditorOverlay] = []
     @Published var look = Look()
     @Published var timecode: Double = 0
@@ -167,7 +167,7 @@ final class EditorViewModel: ObservableObject {
         installTimeObserver()
     }
 
-    private func installTimeObserver() {
+    func installTimeObserver() {
         guard timeObserver == nil else { return }
         let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in

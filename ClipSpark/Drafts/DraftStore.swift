@@ -196,5 +196,10 @@ enum ColorHex {
 }
 
 private extension CGFloat {
-    func clamped01() -> CGFloat { max(0, min(1, self)) }
+    func clamped01() -> CGFloat {
+        var v = self
+        if v < 0 { v = 0 }
+        if v > 1 { v = 1 }
+        return v
+    }
 }

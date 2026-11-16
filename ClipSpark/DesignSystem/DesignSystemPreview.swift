@@ -73,9 +73,13 @@ public struct DesignSystemPreview: View {
 
     private func swatch(_ color: Color, _ name: String) -> some View {
         VStack(spacing: CSSpacing.xs) {
-            RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
-                .fill(color).strokeBorder(CSTheme.hairline, lineWidth: 1)
-                .frame(width: 44, height: 44)
+            ZStack {
+                RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
+                    .fill(color)
+                RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
+                    .strokeBorder(CSTheme.hairline, lineWidth: 1)
+            }
+            .frame(width: 44, height: 44)
             Text(name).font(CSType.timecode).foregroundStyle(CSTheme.textSecondary)
         }
     }
