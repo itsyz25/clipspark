@@ -26,8 +26,9 @@ jobs:
 
       - name: Surface build errors
         if: failure()
-        run: gradle assembleDebug --no-daemon 2>&1 | grep -E "error|e: " | head -40 || true
         working-directory: android
+        run: |
+          gradle assembleDebug --no-daemon 2>&1 | grep -E "error|e: " | head -40 || true
 
       - uses: actions/upload-artifact@v4
         with:
