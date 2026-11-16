@@ -136,10 +136,10 @@ struct EditorView: View {
         .background(CSTheme.bg.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .navigationBarLeading) {
                 Button("Back") { dismiss() }.foregroundStyle(CSTheme.textPrimary)
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Text("Untitled project").font(CSType.body)
                     .foregroundStyle(CSTheme.textSecondary)
             }

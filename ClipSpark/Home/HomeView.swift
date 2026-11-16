@@ -59,10 +59,10 @@ struct HomeView: View {
                 get: { app.editorPayload },
                 set: { app.editorPayload = $0 }
             )) { payload in
-                EditorView(assets: payload.assets, template: payload.template)
+                EditorView(assets: payload.assets, template: payload.template, savedDraft: payload.draft)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Image(systemName: CSIcon.inbox.rawValue)
                         .foregroundStyle(CSTheme.textSecondary)
                 }
