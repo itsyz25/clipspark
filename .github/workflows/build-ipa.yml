@@ -3,6 +3,12 @@ name: Build ClipSpark IPA
 on:
   push:
     branches: [main]
+    paths:
+      - 'ClipSpark/**'
+      - 'project.yml'
+      - 'brand/**'
+      - 'scripts/**'
+      - '.github/workflows/build-ipa.yml'
   workflow_dispatch:
 
 jobs:

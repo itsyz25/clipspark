@@ -31,7 +31,7 @@ jobs:
         if: failure()
         working-directory: android
         run: |
-          grep -E "^e: |error:" build.log | head -40 > errs.txt || true
+          grep -iE "^e: |error|FAILURE|Failed" build.log | head -40 > errs.txt || true
           while IFS= read -r line; do echo "::error::$line"; done < errs.txt
           if [ ! -s errs.txt ]; then
             tail -50 build.log | while IFS= read -r line; do echo "::error::$line"; done
