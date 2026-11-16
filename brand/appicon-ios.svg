@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- ClipSpark iOS app icon: dark tile, teal mark (iOS masks the corners) -->
+  <rect width="1024" height="1024" fill="#0B0B0F"/>
+  <g fill="#00E0C6" transform="translate(512 512) scale(1.55) translate(-128 -128)">
+    <path d="M128 36 C133 60 142 69 166 74 C142 79 133 88 128 112 C123 88 114 79 90 74 C114 69 123 60 128 36 Z"/>
+    <rect x="119" y="106" width="18" height="114" rx="9"/>
+    <rect x="24" y="172" width="88" height="48" rx="14"/>
+    <rect x="144" y="172" width="88" height="48" rx="14"/>
+  </g>
+</svg>

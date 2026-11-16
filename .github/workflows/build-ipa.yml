@@ -17,15 +17,30 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Render app icon (1024 px, from brand SVG)
+        run: |
+          pip3 install --quiet cairosvg
+          python3 -c "import cairosvg; cairosvg.svg2png(url='brand/appicon-ios.svg', write_to='ClipSpark/Assets.xcassets/AppIcon.appiconset/icon1024.png', output_width=1024, output_height=1024)"
+
       - name: Build (unsigned, simulator-free)
         run: |
+          set -o pipefail
           xcodebuild archive \
             -project ClipSpark.xcodeproj \
             -scheme ClipSpark \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/ClipSpark.xcarchive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=""
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" 2>&1 | tee build.log
+
+      - name: Surface compile errors
+        if: failure()
+        run: |
+          grep -nE "error:|warning: .*(deprecated in iOS|unavailable)" build.log | grep -v "generated" | head -40 > errs.txt || true
+          while IFS= read -r line; do echo "::error::$line"; done < errs.txt
+          echo "---- last 60 log lines ----" >> errs.txt
+          tail -60 build.log >> errs.txt
+          if [ ! -s errs.txt ]; then tail -80 build.log | while IFS= read -r line; do echo "::error::$line"; done; fi
 
       - name: Package IPA
         run: |

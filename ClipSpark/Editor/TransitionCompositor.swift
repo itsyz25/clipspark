@@ -103,7 +103,11 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
         }
 
         guard var finalImage = image else {
-            request.finish(with: .zeroCMTime, error: nil) // black frame
+            // No frame available: finish with a black frame so the pipeline
+            // keeps flowing (CoreImage constant black, cropped to render size).
+            let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0))
+                .cropped(to: CGRect(origin: .zero, size: context.size))
+            request.finish(with: black, context: context.ciContext)
             return
         }
 
@@ -187,17 +191,5 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
             result = result.applyingFilter(filterName)
         }
         return result
-    }
-}
-
-private extension AVAsynchronousVideoCompositionRequest {
-    /// Black-frame completion when no frame exists yet (or after end).
-    func finish(with unused: CMTime, error: (any Error)?) {
-        // Render an empty pixel buffer so the pipeline keeps flowing.
-        if let buffer = renderContext.newPixelBuffer() {
-            finish(with: buffer)
-        } else {
-            finish()
-        }
     }
 }

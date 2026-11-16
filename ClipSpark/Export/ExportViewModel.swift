@@ -37,7 +37,7 @@ final class ExportViewModel: ObservableObject {
         // Target render size: keep aspect, set height option (even numbers only)
         let aspect = built.naturalSize.width / built.naturalSize.height
         let h = CGFloat(height)
-        let w = (h * aspect).rounded(.down, toMultipleOf: 2)
+        let w = (h * aspect / 2).rounded(.down) * 2 // even width
         let renderSize = CGSize(width: max(2, w), height: h)
 
         let videoComposition = AVMutableVideoComposition()
