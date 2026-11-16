@@ -53,7 +53,9 @@ final class PhotoLibraryService: ObservableObject {
     func thumbnail(for asset: PHAsset, size: CGSize, completion: @escaping (UIImage?) -> Void) {
         let options = PHImageRequestOptions()
         options.deliveryMode = .fastFormat
-        options.isNetworkAccessAllowed = true
+        // Offline by construction: never fetch from iCloud. Assets that only
+        // exist in the cloud show a placeholder until downloaded on-device.
+        options.isNetworkAccessAllowed = false
         imageManager.requestImage(
             for: asset, targetSize: size, contentMode: .aspectFill, options: options
         ) { image, _ in
