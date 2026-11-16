@@ -118,18 +118,20 @@ struct EditorView: View {
             Spacer(minLength: 0)
 
             // 5. Drawer layer: tool drawers first, then clip inspector
-            switch activeDrawer {
-            case .text: TextDrawer(model: model, onClose: { activeDrawer = nil })
-            case .sticker: StickerDrawer(model: model, onClose: { activeDrawer = nil })
-            case .filter: FilterDrawer(model: model, onClose: { activeDrawer = nil })
-            case .transitions: TransitionsDrawer(model: model, onClose: { activeDrawer = nil })
-            case .audio: AudioDrawer(model: model, onClose: { activeDrawer = nil })
-            case .inspector:
-                if let selected = model.selectedClip {
-                    ClipInspector(model: model, clip: selected)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+            Group {
+                switch activeDrawer {
+                case .text: TextDrawer(model: model, onClose: { activeDrawer = nil })
+                case .sticker: StickerDrawer(model: model, onClose: { activeDrawer = nil })
+                case .filter: FilterDrawer(model: model, onClose: { activeDrawer = nil })
+                case .transitions: TransitionsDrawer(model: model, onClose: { activeDrawer = nil })
+                case .audio: AudioDrawer(model: model, onClose: { activeDrawer = nil })
+                case .inspector:
+                    if let selected = model.selectedClip {
+                        ClipInspector(model: model, clip: selected)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                case nil: EmptyView()
                 }
-            case nil: EmptyView()
             }
             .animation(CSMotion.easeOut, value: activeDrawer)
         }

@@ -75,8 +75,7 @@ class ExportController(private val context: Context) {
         val t = transformer ?: return 0f
         val holder = ProgressHolder()
         val state = t.getProgress(holder)
-        return if (state == Transformer.PROGRESS_STATE_NO_TRANSFORMATION) 0f
-        else holder.progress / 100f
+        return if (state == Transformer.PROGRESS_STATE_AVAILABLE) holder.progress / 100f else 0f
     }
 
     fun cancel() { transformer?.cancel() }

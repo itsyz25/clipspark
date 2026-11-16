@@ -93,6 +93,9 @@ final class EditorViewModel: ObservableObject {
     @Published var canRedo = false
 
     var sourceAssets: [PHAsset] = []
+    /// Decoded AVAssets matching sourceAssets by index (async-loaded; used for
+    /// composition building — PHAsset itself has no tracks API).
+    var avAssets: [AVAsset] = []
     private(set) var compositionDuration: Double = 0
 
     // MARK: - Undo/redo (snapshots include clips + overlays; cap 50)
@@ -155,16 +158,42 @@ final class EditorViewModel: ObservableObject {
             // Bundled offline recipe: preset speeds, transitions, title overlay
             clips = template.makeClips(
                 assetCount: assets.count,
-                assetDurations: assets.map { $0.duration.seconds }
+                assetDurations: assets.map { $0.duration } // TimeInterval == Double
             )
             overlays = template.makeOverlays()
         } else {
             clips = assets.enumerated().map { index, asset in
-                ClipSegment(assetIndex: index, sourceIn: 0, sourceDuration: asset.duration.seconds)
+                ClipSegment(assetIndex: index, sourceIn: 0, sourceDuration: asset.duration)
             }
         }
-        rebuildComposition()
+        loadAVAssetsThenRebuild()
         installTimeObserver()
+    }
+
+    /// Photos hands out AVAssets asynchronously; composition rebuild waits for
+    /// them. Fully on-device (PHImageManager), no network.
+    private func loadAVAssetsThenRebuild() {
+        let group = DispatchGroup()
+        var loaded: [AVAsset?] = Array(repeating: nil, count: sourceAssets.count)
+        let options = PHVideoRequestOptions()
+        options.version = .current
+        options.isNetworkAccessAllowed = false // offline by construction
+        for (index, asset) in sourceAssets.enumerated() {
+            group.enter()
+            PHImageManager.default().requestAVAsset(
+                forVideo: asset, options: options
+            ) { avAsset, _, _ in
+                loaded[index] = avAsset
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.avAssets = loaded.map { $0 ?? AVURLAsset(url: URL(fileURLWithPath: "/dev/null")) }
+                self.rebuildComposition()
+            }
+        }
     }
 
     func installTimeObserver() {
@@ -210,7 +239,7 @@ final class EditorViewModel: ObservableObject {
 
         for (index, clip) in clips.enumerated() {
             guard
-                let asset = sourceAssets[safe: clip.assetIndex],
+                let asset = avAssets[safe: clip.assetIndex],
                 let videoSource = asset.tracks(withMediaType: .video).first,
                 let compositionTrack = composition.addMutableTrack(
                     withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid
@@ -457,7 +486,7 @@ final class EditorViewModel: ObservableObject {
         let clip = clips[index]
         guard let asset = asset(for: clip) else { return }
 
-        let sourceMax = asset.duration.seconds
+        let sourceMax = asset.duration // PHAsset.duration is TimeInterval (Double)
         let newSourceDuration = newTimelineSeconds * clip.speed
 
         switch edge {

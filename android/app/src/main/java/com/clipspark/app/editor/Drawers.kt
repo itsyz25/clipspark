@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipspark.app.designsystem.*
@@ -181,5 +182,6 @@ private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPoin
     }
 }
 
+@Composable
 private fun Spacer(width: androidx.compose.ui.unit.Dp) =
     androidx.compose.foundation.layout.Spacer(Modifier.width(width))

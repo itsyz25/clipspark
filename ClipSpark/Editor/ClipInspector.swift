@@ -13,7 +13,7 @@ struct ClipInspector: View {
             CSGrabber()
 
             HStack(spacing: CSSpacing.m) {
-                inspectorButton(.split, "Split", model.splitAtPlayhead)
+                inspectorButton(.split, "Split", action: model.splitAtPlayhead)
                 inspectorButton(.duplicate, "Duplicate") { model.duplicate(clip) }
                 inspectorButton(.undo, "Move left") { model.move(clip, by: -1) }
                 inspectorButton(.redo, "Move right") { model.move(clip, by: 1) }

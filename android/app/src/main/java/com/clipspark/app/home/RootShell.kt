@@ -103,17 +103,11 @@ private fun HomeScreen(
     val pickVideos = rememberVideoPicker(
         onPicked = { uris -> onNewProject(uris.map { it.toString() }) }
     )
+    var pendingTemplate by remember { mutableStateOf<ClipTemplate?>(null) }
     val pickForTemplate = rememberVideoPicker(onPicked = { uris ->
-        val template = pendingTemplate
-        pendingTemplate = null
-        if (template != null && uris.isNotEmpty()) {
-            editorModel = EditorViewModel().also {
-                it.load(context, uris.map { u -> u.toString() },
-                    speeds = List(uris.size) { i -> template.speedAt(i) },
-                    transition = template.transitionIn)
-                template.titleOverlay?.let { t -> it.addText(t) }
-            }
-            editing = true
+        pendingTemplate?.let { template ->
+            pendingTemplate = null
+            if (uris.isNotEmpty()) onUseTemplate(template, uris.map { it.toString() })
         }
     })
 
