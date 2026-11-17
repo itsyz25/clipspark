@@ -63,7 +63,11 @@ Not affected by this unit (build fixes only). Carried items from earlier units r
 
 ## 7. Verdict
 
-**FAIL → fixed → re-run in progress.** Rounds #12 (IPA) and #8 (APK) are the verification builds for this report. Verdict will flip to PASS when both are green; ledgers above are complete regardless.
+**Android (APK): PASS** ✅ — Build #10 (run 44072822778) green; artifact `ClipSpark-debug-apk` (18.9 MB) published.
+**iOS (IPA): in convergence** — rounds #9→#17 shrinking error batches (10 → 5 → 3), zero known errors left after commit `607cd36`; verdict pending build #17.
+
+- Rounds tally: APK 10 rounds to green; IPA in progress at 17.
+- Bug-class rule confirmed: ≥3 "unresolved reference" and ≥4 "iOS-17 API on iOS-16 target" bugs → both are now standing pre-push grep checks.
 
 ## Unknown Ledger
 
