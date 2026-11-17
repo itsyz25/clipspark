@@ -62,12 +62,13 @@ struct TextDrawer: View {
 
                 HStack(spacing: CSSpacing.s) {
                     ForEach(swatchColors, id: \.self) { color in
-                        Circle()
-                            .fill(color)
-                            .strokeBorder(CSTheme.hairline, lineWidth: 1)
-                            .frame(width: 28, height: 28)
-                            .onTapGesture { colorPicked(color) }
-                            .accessibilityLabel("Text color")
+                        ZStack {
+                            Circle().fill(color)
+                            Circle().strokeBorder(CSTheme.hairline, lineWidth: 1)
+                        }
+                        .frame(width: 28, height: 28)
+                        .onTapGesture { colorPicked(color) }
+                        .accessibilityLabel("Text color")
                     }
                     Spacer()
                     CSPrimaryButton("Add", icon: .text) { add() }

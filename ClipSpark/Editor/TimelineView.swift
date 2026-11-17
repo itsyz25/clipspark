@@ -83,11 +83,14 @@ private struct ClipBlock: View {
     }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
-            .fill(CSTheme.seedPalette[clip.assetIndex % CSTheme.seedPalette.count].opacity(0.4))
-            .strokeBorder(isSelected ? CSTheme.selection : CSTheme.hairline, lineWidth: isSelected ? 2 : 1)
-            .frame(width: width, height: 56)
-            .overlay(alignment: .bottomTrailing) { durationTag }
+        ZStack {
+            RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
+                .fill(CSTheme.seedPalette[clip.assetIndex % CSTheme.seedPalette.count].opacity(0.4))
+            RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
+                .strokeBorder(isSelected ? CSTheme.selection : CSTheme.hairline, lineWidth: isSelected ? 2 : 1)
+        }
+        .frame(width: width, height: 56)
+        .overlay(alignment: .bottomTrailing) { durationTag }
             .overlay(alignment: .topLeading) { junctionBadge }
             .overlay { trimHandles }
             .onTapGesture { model.select(isSelected ? nil : clip) }

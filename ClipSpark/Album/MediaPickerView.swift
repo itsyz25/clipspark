@@ -157,10 +157,13 @@ private struct AssetCell: View {
     @ViewBuilder
     private var selectionBadge: some View {
         ZStack {
-            Circle()
-                .fill(orderIndex != nil ? CSTheme.accent : .black.opacity(0.4))
-                .strokeBorder(orderIndex != nil ? CSTheme.accent : .white.opacity(0.8), lineWidth: 1.5)
-                .frame(width: 26, height: 26)
+            ZStack {
+                Circle()
+                    .fill(orderIndex != nil ? CSTheme.accent : .black.opacity(0.4))
+                Circle()
+                    .strokeBorder(orderIndex != nil ? CSTheme.accent : .white.opacity(0.8), lineWidth: 1.5)
+            }
+            .frame(width: 26, height: 26)
             if let orderIndex {
                 Text("\(orderIndex + 1)").font(CSType.chip)
                     .foregroundStyle(.black).bold()

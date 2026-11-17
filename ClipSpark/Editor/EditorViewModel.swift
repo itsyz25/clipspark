@@ -320,12 +320,17 @@ final class EditorViewModel: ObservableObject {
             lastClip = updated
         }
 
+        var mix: AVAudioMix? = nil
+        if !audioMixParams.isEmpty {
+            let audioMix = AVMutableAudioMix()
+            audioMix.inputParameters = audioMixParams
+            mix = audioMix
+        }
+
         return (
             composition: composition,
             junctions: junctions,
-            audioMix: audioMixParams.isEmpty
-                ? nil
-                : AVMutableAudioMix.audioMix(withInputParameters: audioMixParams),
+            audioMix: mix,
             duration: cursor,
             naturalSize: naturalSize
         )
