@@ -116,10 +116,13 @@ private struct DraftCard: View {
             action()
         } label: {
             VStack(alignment: .leading, spacing: CSSpacing.xs) {
-                RoundedRectangle(cornerRadius: CSRadius.card, style: .continuous)
-                    .fill(CSTheme.surfaceHigh)
-                    .strokeBorder(CSTheme.hairline, lineWidth: 1)
-                    .frame(width: 148, height: 92)
+                ZStack {
+                    RoundedRectangle(cornerRadius: CSRadius.card, style: .continuous)
+                        .fill(CSTheme.surfaceHigh)
+                    RoundedRectangle(cornerRadius: CSRadius.card, style: .continuous)
+                        .strokeBorder(CSTheme.hairline, lineWidth: 1)
+                }
+                .frame(width: 148, height: 92)
                     .overlay(alignment: .center) {
                         Image(systemName: CSIcon.editClip.rawValue)
                             .font(.system(size: 26, weight: .medium))
@@ -142,8 +145,7 @@ private struct DraftCard: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(role: .destructive) {
-                DraftStore.shared.delete(draft.id)
-                drafts.removeAll { $0.id == draft.id }
+                DraftStore.shared.delete(draft.id) // list refreshes on .onAppear
             } label: {
                 Label("Delete draft", systemImage: CSIcon.delete.rawValue)
             }
@@ -168,10 +170,13 @@ struct TemplateCard: View {
             action()
         } label: {
             VStack(alignment: .leading, spacing: CSSpacing.xs) {
-                RoundedRectangle(cornerRadius: CSRadius.card, style: .continuous)
-                    .fill(seedColor)
-                    .strokeBorder(CSTheme.hairline, lineWidth: 1)
-                    .frame(width: 120, height: 160)
+                ZStack {
+                    RoundedRectangle(cornerRadius: CSRadius.card, style: .continuous)
+                        .fill(seedColor)
+                    RoundedRectangle(cornerRadius: CSRadius.card, style: .continuous)
+                        .strokeBorder(CSTheme.hairline, lineWidth: 1)
+                }
+                .frame(width: 120, height: 160)
                     .overlay(alignment: .center) {
                         Image(systemName: CSIcon.templates.rawValue)
                             .font(.system(size: 30, weight: .medium))

@@ -76,7 +76,7 @@ final class ExportViewModel: ObservableObject {
         progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, case .exporting = self.state else { return }
-                self.state = .exporting(progress: exportSession.progress)
+                self.state = .exporting(progress: Double(exportSession.progress))
             }
         }
 

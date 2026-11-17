@@ -12,7 +12,7 @@ final class EditorViewModel: ObservableObject {
     // MARK: - Model
 
     struct ClipSegment: Identifiable, Equatable {
-        let id = UUID()
+        var id = UUID()
         let assetIndex: Int
         var sourceIn: Double
         var sourceDuration: Double
@@ -323,7 +323,9 @@ final class EditorViewModel: ObservableObject {
         return (
             composition: composition,
             junctions: junctions,
-            audioMix: audioMixParams.isEmpty ? nil : AVMutableAudioMix(inputParameters: audioMixParams),
+            audioMix: audioMixParams.isEmpty
+                ? nil
+                : AVMutableAudioMix.audioMix(withInputParameters: audioMixParams),
             duration: cursor,
             naturalSize: naturalSize
         )
