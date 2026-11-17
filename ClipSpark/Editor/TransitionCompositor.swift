@@ -131,7 +131,7 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
             height: h
         )
         Self.ciContext.render(flipped, to: buffer, bounds: bounds, colorSpace: CGColorSpaceCreateDeviceRGB())
-        request.finish(withRenderedFrame: buffer)
+        request.finish(withComposedVideoFrame: buffer)
     }
 
     private static let ciContext = CIContext(options: [.cacheIntermediates: false])
