@@ -8,7 +8,7 @@ struct TemplatesView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive, minimum: 110, spacing: CSSpacing.m)], spacing: CSSpacing.m) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: CSSpacing.m)], spacing: CSSpacing.m) {
                     ForEach(ClipTemplate.catalog) { template in
                         TemplateCard(template: template) {
                             app.startProject(template: template)

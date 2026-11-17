@@ -75,9 +75,9 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
 
     func renderContextChanged(_ renderContext: AVVideoCompositionRenderContext) {}
 
-    func startRequest(with request: AVAsynchronousVideoCompositionRequest) {
+    func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         let config = Self.config
-        let time = request.renderTime.seconds
+        let time = request.compositionTime.seconds
         let context = request.renderContext
 
         var image: CIImage?
@@ -105,15 +105,36 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
         guard var finalImage = image else {
             // No frame available: finish with a black frame so the pipeline
             // keeps flowing (CoreImage constant black, cropped to render size).
-            let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0))
-                .cropped(to: CGRect(origin: .zero, size: context.size))
-            request.finish(with: black, context: context.ciContext)
+            finish(
+                with: CIImage(color: CIColor(red: 0, green: 0, blue: 0))
+                    .cropped(to: CGRect(origin: .zero, size: context.size)),
+                request: request
+            )
             return
         }
 
         finalImage = Self.applyLook(config.look, to: finalImage)
-        request.finish(with: finalImage, context: context.ciContext)
+        finish(with: finalImage, request: request)
     }
+
+    /// The request API only accepts pixel buffers, so CIImages are rendered
+    /// here (CI bottom-left origin flipped into buffer top-left space).
+    private func finish(with image: CIImage, request: AVAsynchronousVideoCompositionRequest) {
+        guard let buffer = request.renderContext.newPixelBuffer() else { return }
+        let h = CGFloat(CVPixelBufferGetHeight(buffer))
+        let flipped = image.transformed(
+            by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: h)
+        )
+        let bounds = CGRect(
+            x: 0, y: 0,
+            width: CGFloat(CVPixelBufferGetWidth(buffer)),
+            height: h
+        )
+        Self.ciContext.render(flipped, to: buffer, bounds: bounds, colorSpace: CGColorSpaceCreateDeviceRGB())
+        request.finish(with: buffer)
+    }
+
+    private static let ciContext = CIContext(options: [.cacheIntermediates: false])
 
     // MARK: - Blends (all computed locally from the two source frames)
 
