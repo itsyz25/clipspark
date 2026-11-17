@@ -58,15 +58,16 @@ Not affected by this unit (build fixes only). Carried items from earlier units r
 | 9 | `Drawers.kt` missing imports (`background`, `RoundedCornerShape`, `BasicTextField`) | rewrite without import audit | imports added + foundation BasicTextField | **same class as #8** — import audit added to loop |
 | 10 | `EditorDrawer`, `stickerCatalog`, `addSticker`, `TimelineRow` unresolved | callers written before definitions existed | definitions added | definition-usage matrix before push |
 | 11 | `Spacer(8.dp)` pattern in EditorScreen | helper was file-private in Drawers.kt | replaced with `Spacer(Modifier.width(...))` | grep for cross-file private helpers |
+| 12 | `finish(with: buffer)` on composition request | `finish(with:)` is the Error variant in Swift; frame variant has a different label | `finish(withComposedVideoFrame:)` (compiler-supplied label) | check Swift-imported labels of ObjC `finishWith*` selectors; don't guess overloads |
 
 **Same-class rule triggered:** ≥3 "unresolved reference" bugs (#8, #9, #10) → loop check added: *before every push, grep every symbol referenced in changed files against its defining file.*
 
 ## 7. Verdict
 
 **Android (APK): PASS** ✅ — Build #10 (run 44072822778) green; artifact `ClipSpark-debug-apk` (18.9 MB) published.
-**iOS (IPA): in convergence** — rounds #9→#17 shrinking error batches (10 → 5 → 3), zero known errors left after commit `607cd36`; verdict pending build #17.
+**iOS (IPA): in convergence** — rounds #9→#19 shrinking error batches (10 → 5 → 3 → 1); each round since #17 has been single-issue compiler-guided fixes; verdict pending build #20.
 
-- Rounds tally: APK 10 rounds to green; IPA in progress at 17.
+- Rounds tally: APK 10 rounds to green; IPA in progress at 19.
 - Bug-class rule confirmed: ≥3 "unresolved reference" and ≥4 "iOS-17 API on iOS-16 target" bugs → both are now standing pre-push grep checks.
 
 ## Unknown Ledger
