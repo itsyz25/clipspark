@@ -12,8 +12,8 @@ android {
         applicationId = "com.clipspark.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.10.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     buildTypes {
@@ -41,7 +41,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    // Extended icon set (Tune, CallSplit, Speed, SwapHoriz, …) used by the tool dock.
+    // Extended icon set (Tune, CallSplit, Speed, SwapHoriz, â€¦) used by the tool dock.
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.navigation:navigation-compose:2.8.2")

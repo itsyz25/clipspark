@@ -21,6 +21,8 @@ final class EditorViewModel: ObservableObject {
         var isMuted: Bool = false
         /// Transition shown at the junction BETWEEN the previous clip and this one.
         var transitionIn: CSTransition = .none
+        /// Per-property keyframes; times are clip-relative timeline seconds.
+        var keyframes: [CSKeyframe] = []
         var start: Double = 0
         var end: Double = 0
 
@@ -31,6 +33,7 @@ final class EditorViewModel: ObservableObject {
                 && lhs.sourceDuration == rhs.sourceDuration && lhs.speed == rhs.speed
                 && lhs.volume == rhs.volume && lhs.isMuted == rhs.isMuted
                 && lhs.transitionIn == rhs.transitionIn
+                && lhs.keyframes == rhs.keyframes
         }
 
         var trimmedDurationText: String {
@@ -215,22 +218,33 @@ final class EditorViewModel: ObservableObject {
     func rebuildComposition() {
         let built = buildComposition()
         compositionDuration = built.duration
+        lastJunctions = built.junctions
+        lastSpans = built.spans
+        lastNaturalSize = built.naturalSize
 
         let item = AVPlayerItem(asset: built.composition)
         if let audioMix = built.audioMix {
             item.audioMix = audioMix
         }
         player.replaceCurrentItem(with: item)
-        applyVideoComposition(junctions: built.junctions) // custom compositor: transitions + look
+        applyVideoComposition() // custom compositor: transitions + look + keyframes
         seek(to: timecode, animateHaptics: false)
     }
 
+    /// Last built composition state — reused when only the look or keyframe
+    /// values change (no structural rebuild needed).
+    private var lastJunctions: [TransitionCompositor.Junction] = []
+    private var lastSpans: [TransitionCompositor.ClipSpan] = []
+    private var lastTrackIDsByClipIndex: [Int: Int32] = [:]
+    private var lastNaturalSize: CGSize = CGSize(width: 1280, height: 720)
+
     /// Shared builder used by BOTH preview and export — a single source of
     /// truth so the exported file always matches what was previewed.
-    func buildComposition() -> (composition: AVMutableComposition, junctions: [TransitionCompositor.Junction], audioMix: AVAudioMix?, duration: Double, naturalSize: CGSize) {
+    func buildComposition() -> (composition: AVMutableComposition, junctions: [TransitionCompositor.Junction], spans: [TransitionCompositor.ClipSpan], audioMix: AVAudioMix?, duration: Double, naturalSize: CGSize) {
         let composition = AVMutableComposition()
         var audioMixParams: [AVMutableAudioMixInputParameters] = []
         var junctions: [TransitionCompositor.Junction] = []
+        var trackIDsByClipIndex: [Int: Int32] = [:]
         var cursor: Double = 0
         var lastTrackID: Int32?
         var lastClip: ClipSegment?
@@ -290,7 +304,37 @@ final class EditorViewModel: ObservableObject {
                     )
                 }
                 let params = AVMutableAudioMixInputParameters(track: audioTrack)
-                params.setVolume(clip.isMuted ? 0 : Float(clip.volume), at: .zero)
+                let volumeKeyframes = clip.keyframes
+                    .filter { $0.property == .volume }
+                    .sorted { $0.time < $1.time }
+                if volumeKeyframes.isEmpty {
+                    params.setVolume(clip.isMuted ? 0 : Float(clip.volume), at: .zero)
+                } else {
+                    // Keyframed volume: ramps between keyframes, absolute
+                    // timeline time = clip start + keyframe time. Mute wins.
+                    let muteFactor: Float = clip.isMuted ? 0 : 1
+                    let kfs = volumeKeyframes
+                    for i in 0..<(kfs.count - 1) {
+                        let a = kfs[i], b = kfs[i + 1]
+                        params.setVolume(
+                            Float(max(0, min(2, a.value))) * muteFactor,
+                            at: CMTime(seconds: at + a.time, preferredTimescale: 600)
+                        )
+                        params.setVolumeRamp(
+                            fromStartVolume: Float(max(0, min(2, a.value))) * muteFactor,
+                            toEndVolume: Float(max(0, min(2, b.value))) * muteFactor,
+                            forTimeRange: CMTimeRange(
+                                start: CMTime(seconds: at + a.time, preferredTimescale: 600),
+                                duration: CMTime(seconds: max(0.01, b.time - a.time), preferredTimescale: 600)
+                            )
+                        )
+                    }
+                    let last = kfs[kfs.count - 1]
+                    params.setVolume(
+                        Float(max(0, min(2, last.value))) * muteFactor,
+                        at: CMTime(seconds: at + last.time, preferredTimescale: 600)
+                    )
+                }
                 audioMixParams.append(params)
             }
 
@@ -317,6 +361,7 @@ final class EditorViewModel: ObservableObject {
             }
             cursor = updated.end
             lastTrackID = compositionTrack.trackID
+            trackIDsByClipIndex[index] = compositionTrack.trackID
             lastClip = updated
         }
 
@@ -327,9 +372,24 @@ final class EditorViewModel: ObservableObject {
             mix = audioMix
         }
 
+        // Per-clip spans: identity + keyframes per composition track, so the
+        // compositor can apply keyframed transforms/opacity/adjust per frame.
+        lastTrackIDsByClipIndex = trackIDsByClipIndex
+        var spans: [TransitionCompositor.ClipSpan] = []
+        for (index, clip) in clips.enumerated() where !clip.keyframes.isEmpty {
+            guard let trackID = trackIDsByClipIndex[index] else { continue }
+            spans.append(TransitionCompositor.ClipSpan(
+                trackID: trackID,
+                start: clip.start,
+                end: clip.end,
+                keyframes: clip.keyframes
+            ))
+        }
+
         return (
             composition: composition,
             junctions: junctions,
+            spans: spans,
             audioMix: mix,
             duration: cursor,
             naturalSize: naturalSize
@@ -338,15 +398,33 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: - Video composition (transitions + look, offline, GPU compositor)
 
-    func applyVideoComposition(junctions: [TransitionCompositor.Junction] = []) {
+    func applyVideoComposition() {
         guard let item = player.currentItem else { return }
 
+        // Fresh spans from current clip state — keyframe edits must show
+        // immediately without a structural composition rebuild.
+        var spans: [TransitionCompositor.ClipSpan] = []
+        for (index, clip) in clips.enumerated() where !clip.keyframes.isEmpty {
+            guard let trackID = lastTrackIDsByClipIndex[index], clip.end > clip.start else { continue }
+            spans.append(TransitionCompositor.ClipSpan(
+                trackID: trackID,
+                start: clip.start,
+                end: clip.end,
+                keyframes: clip.keyframes
+            ))
+        }
+        lastSpans = spans
+
         let composition = AVMutableVideoComposition()
-        composition.renderSize = buildComposition().naturalSize
+        composition.renderSize = lastNaturalSize
         composition.frameDuration = CMTime(value: 1, timescale: 30)
         composition.customVideoCompositorClass = TransitionCompositor.self
 
-        TransitionCompositor.config = TransitionCompositor.Config(junctions: junctions, look: look)
+        TransitionCompositor.config = TransitionCompositor.Config(
+            junctions: lastJunctions,
+            spans: lastSpans,
+            look: look
+        )
         item.videoComposition = composition
     }
 
@@ -527,9 +605,14 @@ final class EditorViewModel: ObservableObject {
 
         var left = clip
         left.sourceDuration = localTimelineSeconds * clip.speed
+        left.keyframes = clip.keyframes.filter { $0.time <= localTimelineSeconds }
         var right = clip
+        right.id = UUID()
         right.sourceIn = splitSourceIn
         right.sourceDuration = clip.sourceDuration - localTimelineSeconds * clip.speed
+        right.keyframes = clip.keyframes
+            .filter { $0.time > localTimelineSeconds }
+            .map { var kf = $0; kf.time -= localTimelineSeconds; return kf }
 
         mutate({ clips in
             clips.remove(at: index)
@@ -588,6 +671,90 @@ final class EditorViewModel: ObservableObject {
         guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
         guard index > 0 else { return } // no junction before the first clip
         mutate({ clips in clips[index].transitionIn = type })
+    }
+
+    // MARK: - Keyframe edits
+
+    func keyframes(on clip: ClipSegment, for property: CSKeyframeProperty) -> [CSKeyframe] {
+        clip.keyframes.filter { $0.property == property }.sorted { $0.time < $1.time }
+    }
+
+    /// Adds one keyframe at clip-relative seconds `t` (one undo step).
+    func addKeyframe(_ clip: ClipSegment, _ property: CSKeyframeProperty, value: Double, at t: Double) {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        let r = property.range
+        let kf = CSKeyframe(
+            property: property,
+            time: max(0, min(t, clip.timelineDuration)),
+            value: max(r.lowerBound, min(r.upperBound, value))
+        )
+        mutate({ clips in clips[index].keyframes.append(kf) })
+        CSHaptics.tick()
+    }
+
+    /// Removes one keyframe by id (one undo step).
+    func removeKeyframe(_ clip: ClipSegment, _ id: UUID) {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        mutate({ clips in
+            clips[index].keyframes.removeAll { $0.id == id }
+        })
+    }
+
+    /// Clears every keyframe of one property (one undo step).
+    func removeKeyframes(_ clip: ClipSegment, _ property: CSKeyframeProperty) {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        mutate({ clips in
+            clips[index].keyframes.removeAll { $0.property == property }
+        })
+    }
+
+    /// Single-shot keyframe update (one undo step).
+    func updateKeyframe(_ clip: ClipSegment, _ kf: CSKeyframe) {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        mutate({ clips in
+            if let i = clips[index].keyframes.firstIndex(where: { $0.id == kf.id }) {
+                clips[index].keyframes[i] = kf
+            }
+        })
+    }
+
+    // Live drag support: snapshot at gesture start, no history per tick.
+
+    func beginKeyframeDrag() { keyframeDragBaseline = currentState }
+
+    func finalizeKeyframeDrag() {
+        guard keyframeDragBaseline != nil else { return }
+        undoStack.append(keyframeDragBaseline!)
+        if undoStack.count > maxHistory { undoStack.removeFirst() }
+        redoStack.removeAll()
+        keyframeDragBaseline = nil
+        syncUndoFlags()
+    }
+
+    private var keyframeDragBaseline: ProjectState?
+
+    /// Live keyframe move during a drag. Volume keyframes need an audio-mix
+    /// rebuild; all other properties only need a compositor config refresh.
+    func updateKeyframeLive(_ clip: ClipSegment, _ kf: CSKeyframe) {
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return }
+        var copy = clips
+        if let i = copy[index].keyframes.firstIndex(where: { $0.id == kf.id }) {
+            copy[index].keyframes[i] = kf
+        }
+        clips = copy
+        if kf.property == .volume {
+            afterClipsChanged()
+        } else {
+            applyVideoComposition()
+        }
+    }
+
+    /// Cheap path when keyframe VALUES change outside a drag (inspector sliders).
+    func refreshKeyframes() {
+        applyVideoComposition()
+        if let clip = selectedClip, clip.keyframes.contains(where: { $0.property == .volume }) {
+            afterClipsChanged() // volume ramps live in the audio mix
+        }
     }
 
     // MARK: - Overlay edits

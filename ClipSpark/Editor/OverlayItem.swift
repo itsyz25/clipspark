@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Which bottom drawer is open in the editor.
 enum EditorDrawer: Equatable {
-    case text, sticker, filter, audio, transitions, inspector
+    case text, sticker, filter, audio, transitions, inspector, keyframes
 }
 
 /// A text/sticker overlay rendered on the canvas. Drag moves it (normalized

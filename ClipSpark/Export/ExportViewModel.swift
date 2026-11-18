@@ -44,7 +44,11 @@ final class ExportViewModel: ObservableObject {
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
         videoComposition.customVideoCompositorClass = TransitionCompositor.self
-        TransitionCompositor.config = TransitionCompositor.Config(junctions: built.junctions, look: model.look)
+        TransitionCompositor.config = TransitionCompositor.Config(
+            junctions: built.junctions,
+            spans: built.spans,
+            look: model.look
+        )
 
         // Bake overlays (text/stickers) into the exported frames, offline
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(

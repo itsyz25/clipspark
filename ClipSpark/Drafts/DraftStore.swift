@@ -5,6 +5,25 @@ import UIKit
 
 // MARK: - Saved draft models (Codable, stored as local JSON — offline)
 
+struct SavedKeyframe: Codable, Equatable {
+    var property: String
+    var time: Double
+    var value: Double
+    var variation: SavedKeyframeVariation
+    var velocityInfluence: Double
+    var clamped: Bool
+    var reversed: Bool
+}
+
+/// Codable form of the variation enum (Swift synthesizes the enum's Codable,
+/// but this flat form keeps drafts readable and forward-compatible).
+struct SavedKeyframeVariation: Codable, Equatable {
+    var type: String            // hold | linear | preset | bezier | spring
+    var preset: String?
+    var c1x: Double?, c1y: Double?, c2x: Double?, c2y: Double?
+    var stiffness: Double?, damping: Double?
+}
+
 struct SavedClip: Codable, Equatable {
     var assetIndex: Int
     var sourceIn: Double
@@ -13,6 +32,7 @@ struct SavedClip: Codable, Equatable {
     var volume: Double
     var isMuted: Bool
     var transitionIn: String
+    var keyframes: [SavedKeyframe]?   // optional: drafts saved before keyframes
 }
 
 struct SavedOverlay: Codable, Equatable {
@@ -98,6 +118,61 @@ final class DraftStore {
     }
 }
 
+// MARK: - Keyframe ⇄ saved forms
+
+extension CSKeyframeVariation {
+    var saved: SavedKeyframeVariation {
+        switch self {
+        case .hold: return SavedKeyframeVariation(type: "hold", preset: nil, c1x: nil, c1y: nil, c2x: nil, c2y: nil, stiffness: nil, damping: nil)
+        case .linear: return SavedKeyframeVariation(type: "linear", preset: nil, c1x: nil, c1y: nil, c2x: nil, c2y: nil, stiffness: nil, damping: nil)
+        case .preset(let p): return SavedKeyframeVariation(type: "preset", preset: p.rawValue, c1x: nil, c1y: nil, c2x: nil, c2y: nil, stiffness: nil, damping: nil)
+        case .bezier(let c1x, let c1y, let c2x, let c2y):
+            return SavedKeyframeVariation(type: "bezier", preset: nil, c1x: c1x, c1y: c1y, c2x: c2x, c2y: c2y, stiffness: nil, damping: nil)
+        case .spring(let stiffness, let damping):
+            return SavedKeyframeVariation(type: "spring", preset: nil, c1x: nil, c1y: nil, c2x: nil, c2y: nil, stiffness: stiffness, damping: damping)
+        }
+    }
+
+    init(_ saved: SavedKeyframeVariation) {
+        switch saved.type {
+        case "hold": self = .hold
+        case "preset": self = .preset(CSEasingPreset(rawValue: saved.preset ?? "") ?? .easeInOut)
+        case "bezier":
+            self = .bezier(c1x: saved.c1x ?? 0.3, c1y: saved.c1y ?? 0.3, c2x: saved.c2x ?? 0.7, c2y: saved.c2y ?? 0.7)
+        case "spring": self = .spring(stiffness: saved.stiffness ?? 8, damping: saved.damping ?? 0.55)
+        default: self = .linear
+        }
+    }
+}
+
+extension CSKeyframe {
+    var saved: SavedKeyframe {
+        SavedKeyframe(
+            property: property.rawValue,
+            time: time,
+            value: value,
+            variation: variation.saved,
+            velocityInfluence: settings.velocityInfluence,
+            clamped: settings.clamped,
+            reversed: settings.reversed
+        )
+    }
+
+    init(_ saved: SavedKeyframe) {
+        self.init(
+            property: CSKeyframeProperty(rawValue: saved.property) ?? .scale,
+            time: saved.time,
+            value: saved.value,
+            variation: CSKeyframeVariation(saved.variation),
+            settings: CSKeyframeSettings(
+                velocityInfluence: saved.velocityInfluence,
+                clamped: saved.clamped,
+                reversed: saved.reversed
+            )
+        )
+    }
+}
+
 // MARK: - Mapping EditorViewModel ⇄ SavedDraft
 
 extension EditorViewModel {
@@ -116,7 +191,8 @@ extension EditorViewModel {
                     speed: clip.speed,
                     volume: clip.volume,
                     isMuted: clip.isMuted,
-                    transitionIn: clip.transitionIn.rawValue
+                    transitionIn: clip.transitionIn.rawValue,
+                    keyframes: clip.keyframes.map { $0.saved }
                 )
             },
             overlays: overlays.map { overlay in
@@ -151,7 +227,8 @@ extension EditorViewModel {
                 speed: saved.speed,
                 volume: saved.volume,
                 isMuted: saved.isMuted,
-                transitionIn: CSTransition(rawValue: saved.transitionIn) ?? .none
+                transitionIn: CSTransition(rawValue: saved.transitionIn) ?? .none,
+                keyframes: (saved.keyframes ?? []).map { CSKeyframe($0) }
             )
         }
         overlays = draft.overlays.map { saved in

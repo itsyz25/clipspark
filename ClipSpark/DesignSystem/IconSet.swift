@@ -26,6 +26,7 @@ public enum CSIcon: String, CaseIterable {
     case duplicate      = "plus.square.on.square"
     case volume         = "speaker.wave.2.fill"
     case settings       = "gearshape"
+case keyframe       = "diamond"
     case templates      = "rectangle.stack"
     case drafts         = "tray.full"
     case inbox          = "tray"

@@ -56,6 +56,9 @@ class PlaybackController(context: Context) {
     fun pause() { player.pause() }
     val isPlaying: Boolean get() = player.isPlaying
 
+    /** Live volume (used by keyframed volume evaluation in the poll loop). */
+    fun setVolume(v: Float) { player.volume = v.coerceIn(0f, 1f) }
+
     /** Timeline timecode → playlist seek. */
     fun seekToTimelineMs(t: Long) {
         if (clips.isEmpty()) return

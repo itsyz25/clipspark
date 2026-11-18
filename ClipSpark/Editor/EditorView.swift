@@ -103,6 +103,12 @@ struct EditorView: View {
                         activeDrawer = .transitions
                     }
                     CSToolChip(.audio, "Audio") { activeDrawer = .audio }
+                    CSToolChip(.keyframe, "Keyframes") {
+                        if model.selectedClip == nil, let first = model.clips.first {
+                            model.select(first)
+                        }
+                        activeDrawer = .keyframes
+                    }
                     CSToolChip(.speed, "Speed") {
                         if model.selectedClip == nil, let first = model.clips.first {
                             model.select(first)
@@ -125,6 +131,7 @@ struct EditorView: View {
                 case .filter: FilterDrawer(model: model, onClose: { activeDrawer = nil })
                 case .transitions: TransitionsDrawer(model: model, onClose: { activeDrawer = nil })
                 case .audio: AudioDrawer(model: model, onClose: { activeDrawer = nil })
+                case .keyframes: KeyframeDrawer(model: model, onClose: { activeDrawer = nil })
                 case .inspector:
                     if let selected = model.selectedClip {
                         ClipInspector(model: model, clip: selected)

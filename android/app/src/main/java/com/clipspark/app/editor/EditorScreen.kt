@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +43,44 @@ data class ExportUi(
     val error: String? = null,
 )
 
+/** Keyframe-evaluated preview transform for the current frame. */
+private data class PreviewFx(
+    val scale: Float = 1f,
+    val rotation: Float = 0f,
+    val posX: Float = 0f,
+    val posY: Float = 0f,
+    val opacity: Float = 1f,
+)
+
+/** Evaluates the clip under the playhead; identity when it has no keyframes. */
+private fun evaluatePreviewFx(model: EditorViewModel): PreviewFx {
+    val clip = model.clips.firstOrNull {
+        model.timecodeMs >= it.startMs && model.timecodeMs < it.endMs
+    } ?: return PreviewFx()
+    if (clip.keyframes.isEmpty()) return PreviewFx()
+    val t = model.timecodeMs - clip.startMs
+    fun v(p: KeyframeProperty, base: Double) =
+        KeyframeEvaluator.evaluate(clip.keyframes, p, base, t)
+    return PreviewFx(
+        scale = v(KeyframeProperty.SCALE, 1.0).toFloat(),
+        rotation = v(KeyframeProperty.ROTATION, 0.0).toFloat(),
+        posX = v(KeyframeProperty.POS_X, 0.0).toFloat(),
+        posY = v(KeyframeProperty.POS_Y, 0.0).toFloat(),
+        opacity = v(KeyframeProperty.OPACITY, 1.0).toFloat(),
+    )
+}
+
+/** Keyframed volume for the clip under the playhead (1 = untouched). */
+private fun evaluatePreviewVolume(model: EditorViewModel): Float {
+    val clip = model.clips.firstOrNull {
+        model.timecodeMs >= it.startMs && model.timecodeMs < it.endMs
+    } ?: return 1f
+    val base = if (clip.muted) 0.0 else clip.volume.toDouble()
+    val t = model.timecodeMs - clip.startMs
+    val v = KeyframeEvaluator.evaluate(clip.keyframes, KeyframeProperty.VOLUME, base, t)
+    return v.coerceIn(0.0, 1.0).toFloat()
+}
+
 @Composable
 fun EditorScreen(
     model: EditorViewModel,
@@ -54,6 +93,7 @@ fun EditorScreen(
     var isPlayingState by remember { mutableStateOf(false) }
     var drawer by remember { mutableStateOf<EditorDrawer?>(null) }
     var draftSaved by remember { mutableStateOf<String?>(null) }
+    var previewFx by remember { mutableStateOf(PreviewFx()) }
 
     DisposableEffect(Unit) { onDispose { playback.release() } }
 
@@ -61,11 +101,13 @@ fun EditorScreen(
     LaunchedEffect(model.clips) {
         if (model.clips.isNotEmpty()) playback.setClips(model.clips)
     }
-    // Poll playhead position (~12 Hz).
+    // Poll playhead position (~12 Hz) + evaluate keyframes for preview/volume.
     LaunchedEffect(playback) {
         while (true) {
             model.updateTimecode(playback.currentTimecodeMs())
             isPlayingState = playback.isPlaying
+            previewFx = evaluatePreviewFx(model)
+            playback.setVolume(evaluatePreviewVolume(model))
             delay(80)
         }
     }
@@ -86,7 +128,8 @@ fun EditorScreen(
             .fillMaxSize()
             .background(CS.BG)
     ) {
-        // 1. Preview canvas (Media3 PlayerView, no controls — custom UI)
+        // 1. Preview canvas (Media3 PlayerView, no controls — custom UI).
+        // Keyframes transform the video layer only (the play icon stays put).
         Box(
             Modifier
                 .fillMaxWidth()
@@ -94,15 +137,28 @@ fun EditorScreen(
                 .background(Color.Black)
                 .clickable { if (playback.isPlaying) playback.pause() else playback.play() }
         ) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        player = playback.player
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = previewFx.scale
+                        scaleY = previewFx.scale
+                        rotationZ = previewFx.rotation
+                        translationX = previewFx.posX * size.width
+                        translationY = previewFx.posY * size.height
+                        alpha = previewFx.opacity
                     }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            player = playback.player
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
             if (!isPlayingState) {
                 Icon(
                     CSIcons.Play, "Play",
@@ -174,6 +230,10 @@ fun EditorScreen(
             CSToolChip(CSIcons.Sticker, "Sticker") { drawer = EditorDrawer.STICKER }
             CSToolChip(CSIcons.Filter, "Filters") { drawer = EditorDrawer.FILTER }
             CSToolChip(CSIcons.Transitions, "Transitions") { drawer = EditorDrawer.TRANSITIONS }
+            CSToolChip(CSIcons.Keyframe, "Keyframes") {
+                model.selectedClipId ?: model.clips.firstOrNull()?.id?.let(model::select)
+                drawer = EditorDrawer.KEYFRAMES
+            }
             CSToolChip(CSIcons.Audio, "Audio") { drawer = EditorDrawer.AUDIO }
             Spacer(Modifier.width(8.dp))
         }
@@ -184,6 +244,7 @@ fun EditorScreen(
             EditorDrawer.TEXT -> TextDrawer(model) { drawer = null }
             EditorDrawer.FILTER -> FilterDrawer(model) { drawer = null }
             EditorDrawer.TRANSITIONS -> TransitionsDrawer(model) { drawer = null }
+            EditorDrawer.KEYFRAMES -> KeyframeDrawer(model) { drawer = null }
             EditorDrawer.AUDIO -> AudioDrawer(model) { drawer = null }
             EditorDrawer.STICKER -> StickerDrawer(model) { drawer = null }
             null -> {}

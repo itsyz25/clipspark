@@ -1,7 +1,10 @@
 package com.clipspark.app.editor
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -15,7 +18,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipspark.app.designsystem.*
@@ -185,3 +192,330 @@ private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPoin
 @Composable
 private fun Spacer(width: androidx.compose.ui.unit.Dp) =
     androidx.compose.foundation.layout.Spacer(Modifier.width(width))
+
+
+// MARK: - Keyframe drawer (mirrors iOS KeyframeDrawer.swift)
+
+private enum KeyframeVariationChoice(val label: String, val make: () -> KeyframeVariation) {
+    HOLD("Hold", { KeyframeVariation.Hold }),
+    LINEAR("Linear", { KeyframeVariation.Linear }),
+    EASE_IN("Ease In", { KeyframeVariation.Preset(EasingPreset.EASE_IN) }),
+    EASE_OUT("Ease Out", { KeyframeVariation.Preset(EasingPreset.EASE_OUT) }),
+    EASE_IN_OUT("Ease In/Out", { KeyframeVariation.Preset(EasingPreset.EASE_IN_OUT) }),
+    OVERSHOOT("Overshoot", { KeyframeVariation.Preset(EasingPreset.OVERSHOOT) }),
+    BOUNCE("Bounce", { KeyframeVariation.Preset(EasingPreset.BOUNCE) }),
+    ELASTIC("Elastic", { KeyframeVariation.Preset(EasingPreset.ELASTIC) }),
+    ANTICIPATION("Anticipation", { KeyframeVariation.Preset(EasingPreset.ANTICIPATION) }),
+    SMOOTH("Smooth", { KeyframeVariation.Preset(EasingPreset.SMOOTH) }),
+    BEZIER("Custom Curve", { KeyframeVariation.Bezier() }),
+    SPRING("Spring", { KeyframeVariation.Spring() });
+}
+
+/** Property's unkeyed value, from the clip / global look. */
+private fun KeyframeProperty.staticBase(clip: ClipSegment): Double = when (this) {
+    KeyframeProperty.SCALE -> 1.0
+    KeyframeProperty.POS_X, KeyframeProperty.POS_Y -> 0.0
+    KeyframeProperty.ROTATION -> 0.0
+    KeyframeProperty.OPACITY -> 1.0
+    KeyframeProperty.VOLUME -> (if (clip.muted) 0.0 else clip.volume.toDouble())
+    KeyframeProperty.BRIGHTNESS, KeyframeProperty.CONTRAST, KeyframeProperty.SATURATION -> default
+}
+
+@Composable
+fun KeyframeDrawer(model: EditorViewModel, onClose: () -> Unit) {
+    val clip = model.clips.firstOrNull { it.id == model.selectedClipId }
+    var property by remember { mutableStateOf(KeyframeProperty.SCALE) }
+    var selectedKfId by remember { mutableStateOf<Long?>(null) }
+    var graphSize by remember { mutableStateOf(IntSize.Zero) }
+
+    DrawerShell("Keyframes", onClose) {
+        if (clip == null) {
+            Text(
+                "Select a clip on the timeline to keyframe it.",
+                fontSize = 12.sp, color = CS.TextSecondary,
+                modifier = Modifier.padding(16.dp),
+            )
+            return@DrawerShell
+        }
+
+        // Property chips
+        LazyRow(
+            Modifier.padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(KeyframeProperty.entries.toList()) { p ->
+                Text(
+                    p.label,
+                    fontSize = 11.sp,
+                    color = if (p == property) CS.BG else CS.TextPrimary,
+                    modifier = Modifier
+                        .clickable { property = p; selectedKfId = null }
+                        .background(if (p == property) CS.Accent else CS.Surface, RoundedCornerShape(20.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        val kfs = model.keyframesOf(clip.id, property)
+
+        // Graph: tap a point to select, tap empty space to add, drag to move.
+        Box(
+            Modifier
+                .padding(16.dp)
+                .fillMaxWidth()
+                .height(200.dp)
+                .background(CS.Surface, RoundedCornerShape(10.dp))
+                .onSizeChanged { graphSize = it }
+                .pointerInput(property, kfs.size, selectedKfId) {
+                    detectTapGestures(
+                        onTap = { offset ->
+                            val w = size.width.toFloat()
+                            val h = size.height.toFloat()
+                            if (w <= 0f || h <= 0f) return@detectTapGestures
+                            val span = clip.timelineDurationMs.coerceAtLeast(1L)
+                            val near = kfs.firstOrNull { kf ->
+                                val kx = (kf.timeMs.toFloat() / span.toFloat()) * w
+                                val frac = ((kf.value - property.min) / (property.max - property.min)).toFloat()
+                                val ky = h * (1 - frac)
+                                val dx = kx - offset.x
+                                val dy = ky - offset.y
+                                dx * dx + dy * dy < 48f * 48f
+                            }
+                            if (near != null) {
+                                selectedKfId = near.id
+                            } else {
+                                val t = ((offset.x / w) * span.toFloat()).toLong().coerceIn(0L, span)
+                                val v = property.max - (offset.y / h).toDouble() * (property.max - property.min)
+                                model.addKeyframe(clip.id, property, v, t)
+                                selectedKfId = null
+                            }
+                        },
+                    )
+                }
+                .pointerInput(property, kfs.size, selectedKfId) {
+                    detectDragGestures(
+                        onDragStart = { if (selectedKfId != null) model.beginKeyframeDrag() },
+                        onDrag = { change, _ ->
+                            val kfId = selectedKfId ?: return@detectDragGestures
+                            val w = size.width.toFloat()
+                            val h = size.height.toFloat()
+                            if (w <= 0f || h <= 0f) return@detectDragGestures
+                            val span = clip.timelineDurationMs.coerceAtLeast(1L)
+                            val kf = kfs.firstOrNull { it.id == kfId } ?: return@detectDragGestures
+                            val t = ((change.position.x / w) * span.toFloat()).toLong().coerceIn(0L, span)
+                            val v = property.max - (change.position.y / h).toDouble() * (property.max - property.min)
+                            model.updateKeyframeLive(clip.id, kf.copy(timeMs = t, value = property.clamp(v)))
+                        },
+                        onDragEnd = { model.endKeyframeDrag() },
+                        onDragCancel = { model.endKeyframeDrag() },
+                    )
+                },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val span = clip.timelineDurationMs.coerceAtLeast(1L)
+                val staticBase = property.staticBase(clip)
+
+                fun xPos(ms: Long): Float = (ms.toFloat() / span.toFloat()) * w
+                fun yPos(v: Double): Float {
+                    val frac = ((v - property.min) / (property.max - property.min)).coerceIn(-0.25, 1.25)
+                    return h * (1 - frac.toFloat())
+                }
+
+                // Curve sampled from the real evaluator
+                var prev: Offset? = null
+                var x = 0f
+                while (x <= w) {
+                    val t = (x / w * span.toFloat()).toLong()
+                    val v = KeyframeEvaluator.evaluate(clip.keyframes, property, staticBase, t)
+                    val p = Offset(x, yPos(v))
+                    prev?.let { drawLine(CS.Accent, it, p, strokeWidth = 4f) }
+                    prev = p
+                    x += 3f
+                }
+                kfs.forEach { kf ->
+                    drawCircle(
+                        if (kf.id == selectedKfId) CS.Selection else CS.Accent,
+                        radius = 9f,
+                        center = Offset(xPos(kf.timeMs), yPos(kf.value)),
+                    )
+                }
+                // playhead
+                val px = xPos((model.timecodeMs - clip.startMs).coerceIn(0L, span))
+                drawLine(
+                    CS.TextSecondary.copy(alpha = 0.6f),
+                    Offset(px, 0f),
+                    Offset(px, h),
+                    strokeWidth = 2f,
+                )
+            }
+        }
+
+        // Add at playhead + clear
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                "◆ Add here", fontSize = 12.sp, color = CS.BG,
+                modifier = Modifier
+                    .clickable {
+                        val t = (model.timecodeMs - clip.startMs).coerceIn(0L, clip.timelineDurationMs)
+                        val v = KeyframeEvaluator.evaluate(
+                            clip.keyframes, property, property.staticBase(clip), t,
+                        )
+                        model.addKeyframe(clip.id, property, v, t)
+                    }
+                    .background(CS.Accent, RoundedCornerShape(20.dp))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+            if (kfs.isNotEmpty()) {
+                Text(
+                    "Remove all", fontSize = 12.sp, color = CS.Danger,
+                    modifier = Modifier
+                        .clickable { model.removeKeyframes(clip.id, property); selectedKfId = null }
+                        .background(CS.Surface, RoundedCornerShape(20.dp))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        // Inspector for the selected keyframe
+        val kf = kfs.firstOrNull { it.id == selectedKfId }
+        if (kf != null) {
+            Column(
+                Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth()
+                    .background(CS.Surface, RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Keyframe @ ${"%.2f".format(kf.timeMs / 1000.0)}s  ${property.format(kf.value)}",
+                        fontSize = 13.sp, color = CS.TextPrimary,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "Delete", fontSize = 12.sp, color = CS.Danger,
+                        modifier = Modifier.clickable { model.removeKeyframe(clip.id, kf.id); selectedKfId = null },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+
+                // Value slider (one undo step per gesture)
+                var valueDraft by remember(kf.id) { mutableStateOf(kf.value) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(property.format(valueDraft), fontSize = 11.sp, color = CS.TextSecondary)
+                    Spacer(Modifier.width(8.dp))
+                    Slider(
+                        value = valueDraft.toFloat(),
+                        onValueChange = {
+                            valueDraft = it.toDouble()
+                            model.ensureKeyframeUndo()
+                            model.updateKeyframeLive(clip.id, kf.copy(value = valueDraft))
+                        },
+                        onValueChangeFinished = { model.endKeyframeDrag() },
+                        valueRange = property.min.toFloat()..property.max.toFloat(),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                // Variation chips
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(KeyframeVariationChoice.entries.toList()) { choice ->
+                        val selected = choice.label == kf.variation.label
+                        Text(
+                            choice.label, fontSize = 11.sp,
+                            color = if (selected) CS.BG else CS.TextPrimary,
+                            modifier = Modifier
+                                .clickable { model.updateKeyframe(clip.id, kf.copy(variation = choice.make())) }
+                                .background(if (selected) CS.Accent else CS.Surface, RoundedCornerShape(16.dp))
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+
+                // Per-variation params + shared custom settings
+                when (val variation = kf.variation) {
+                    is KeyframeVariation.Bezier -> {
+                        kfSlider(model, "Point 1 X", variation.c1x, 0.0, 1.0) { v ->
+                            model.updateKeyframeLive(clip.id, kf.copy(variation = variation.copy(c1x = v)))
+                        }
+                        kfSlider(model, "Point 1 Y", variation.c1y, 0.0, 1.0) { v ->
+                            model.updateKeyframeLive(clip.id, kf.copy(variation = variation.copy(c1y = v)))
+                        }
+                        kfSlider(model, "Point 2 X", variation.c2x, 0.0, 1.0) { v ->
+                            model.updateKeyframeLive(clip.id, kf.copy(variation = variation.copy(c2x = v)))
+                        }
+                        kfSlider(model, "Point 2 Y", variation.c2y, 0.0, 1.0) { v ->
+                            model.updateKeyframeLive(clip.id, kf.copy(variation = variation.copy(c2y = v)))
+                        }
+                    }
+                    is KeyframeVariation.Spring -> {
+                        kfSlider(model, "Snappiness", variation.stiffness, 1.0, 30.0) { v ->
+                            model.updateKeyframeLive(clip.id, kf.copy(variation = variation.copy(stiffness = v)))
+                        }
+                        kfSlider(model, "Bounce", variation.damping, 0.05, 1.0) { v ->
+                            model.updateKeyframeLive(clip.id, kf.copy(variation = variation.copy(damping = v)))
+                        }
+                    }
+                    else -> {}
+                }
+
+                kfSlider(model, "Velocity blend", kf.settings.velocityInfluence, 0.0, 1.0) { v ->
+                    model.updateKeyframeLive(clip.id, kf.copy(settings = kf.settings.copy(velocityInfluence = v)))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Clamp to range", fontSize = 11.sp, color = CS.TextSecondary)
+                    Spacer(Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = kf.settings.clamped,
+                        onCheckedChange = { on ->
+                            model.updateKeyframe(clip.id, kf.copy(settings = kf.settings.copy(clamped = on)))
+                        },
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Reversed", fontSize = 11.sp, color = CS.TextSecondary)
+                    Spacer(Modifier.weight(1f))
+                    androidx.compose.material3.Switch(
+                        checked = kf.settings.reversed,
+                        onCheckedChange = { on ->
+                            model.updateKeyframe(clip.id, kf.copy(settings = kf.settings.copy(reversed = on)))
+                        },
+                    )
+                }
+            }
+        } else {
+            Text(
+                "Tap the graph to add a keyframe. Tap a point to edit its curve and settings.",
+                fontSize = 11.sp, color = CS.TextSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
+    }
+}
+
+/** Settings slider with live updates. */
+@Composable
+private fun kfSlider(
+    model: EditorViewModel,
+    label: String,
+    value: Double,
+    min: Double,
+    max: Double,
+    set: (Double) -> Unit,
+) {
+    var draft by remember(value) { mutableStateOf(value) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 11.sp, color = CS.TextSecondary, modifier = Modifier.width(90.dp))
+        Spacer(Modifier.width(8.dp))
+        Slider(
+            value = draft.toFloat(),
+            onValueChange = { draft = it.toDouble(); set(draft) },
+            onValueChangeFinished = { model.endKeyframeDrag() },
+            valueRange = min.toFloat()..max.toFloat(),
+            modifier = Modifier.weight(1f),
+        )
+    }
+}

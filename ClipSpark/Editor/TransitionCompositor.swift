@@ -51,8 +51,18 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
         let inTrack: Int32
     }
 
+    /// One clip's timeline window + its keyframes, keyed by composition
+    /// track. Lets the compositor keyframe-transform each track's frames.
+    struct ClipSpan {
+        let trackID: Int32
+        let start: Double
+        let end: Double
+        let keyframes: [CSKeyframe]
+    }
+
     struct Config {
         var junctions: [Junction] = []
+        var spans: [ClipSpan] = []
         var look = EditorViewModel.Look()
     }
 
@@ -78,43 +88,98 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         let config = Self.config
         let time = request.compositionTime.seconds
-        let context = request.renderContext
+
+        // Per-track preprocessing: keyframed transform/opacity + look. Every
+        // frame belongs to exactly one clip, so the project look applies
+        // per track (identical result to post-blend when unkeyed).
+        func processedFrame(_ trackID: Int32) -> CIImage? {
+            guard let frame = request.sourceFrame(byTrackID: trackID) else { return nil }
+            let span = config.spans.first { $0.trackID == trackID }
+            let localTime = span.map { max(0, min(time - $0.start, $0.end - $0.start)) } ?? time
+            return Self.applyKeyframes(
+                span?.keyframes ?? [], at: localTime, look: config.look,
+                to: CIImage(cvPixelBuffer: frame)
+            )
+        }
 
         var image: CIImage?
 
         if let junction = config.junctions.first(where: { time >= $0.time && time < $0.time + $0.duration }) {
-            let outFrame = request.sourceFrame(byTrackID: junction.outTrack).map(CIImage.init(cvPixelBuffer:))
-            let inFrame = request.sourceFrame(byTrackID: junction.inTrack).map(CIImage.init(cvPixelBuffer:))
             let progress = (time - junction.time) / max(junction.duration, 0.001)
             image = blend(
-                out: outFrame, incoming: inFrame,
+                out: processedFrame(junction.outTrack),
+                incoming: processedFrame(junction.inTrack),
                 type: junction.type, progress: progress,
-                size: context.size
+                size: request.renderContext.size
             )
         } else {
             // Single visible clip: take whichever track has a frame.
             for trackIDValue in request.sourceTrackIDs {
-                let trackID = trackIDValue.int32Value
-                if let frame = request.sourceFrame(byTrackID: trackID) {
-                    image = CIImage(cvPixelBuffer: frame)
+                if let frame = processedFrame(trackIDValue.int32Value) {
+                    image = frame
                     break
                 }
             }
         }
 
-        guard var finalImage = image else {
+        guard let finalImage = image else {
             // No frame available: finish with a black frame so the pipeline
             // keeps flowing (CoreImage constant black, cropped to render size).
             finish(
                 with: CIImage(color: CIColor(red: 0, green: 0, blue: 0))
-                    .cropped(to: CGRect(origin: .zero, size: context.size)),
+                    .cropped(to: CGRect(origin: .zero, size: request.renderContext.size)),
                 request: request
             )
             return
         }
 
-        finalImage = Self.applyLook(config.look, to: finalImage)
         finish(with: finalImage, request: request)
+    }
+
+    /// Keyframed clip pass: scale / rotation / position / opacity evaluated
+    /// at `t` (clip-relative seconds) and baked into the frame, then the
+    /// effective look (project look with adjust values overridden by any
+    /// brightness/contrast/saturation keyframes).
+    static func applyKeyframes(
+        _ keyframes: [CSKeyframe], at t: Double, look: EditorViewModel.Look, to image: CIImage
+    ) -> CIImage {
+        guard !keyframes.isEmpty else { return applyLook(look, to: image) }
+
+        func value(_ property: CSKeyframeProperty, _ base: Double) -> Double {
+            CSKeyframeEvaluator.evaluate(keyframes, property, staticBase: base, at: t)
+        }
+
+        let extent = image.extent
+        let scale = value(.scale, 1)
+        let rotation = value(.rotation, 0)
+        let posX = value(.posX, 0)
+        let posY = value(.posY, 0)
+        let opacity = value(.opacity, 1)
+
+        var transform = CGAffineTransform.identity
+        transform = transform.translatedBy(x: extent.midX, y: extent.midY)
+        transform = transform.rotated(by: rotation * .pi / 180)
+        transform = transform.scaledBy(x: scale, y: scale)
+        transform = transform.translatedBy(x: -extent.midX, y: -extent.midY)
+        transform = transform.translatedBy(x: posX * extent.width, y: posY * extent.height)
+        var result = image.transformed(by: transform)
+
+        if opacity < 0.999 {
+            result = result.applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: max(0, opacity)),
+            ])
+        }
+
+        let effective = EditorViewModel.Look(
+            filter: look.filter,
+            brightness: keyframes.contains { $0.property == .brightness }
+                ? value(.brightness, look.brightness) : look.brightness,
+            contrast: keyframes.contains { $0.property == .contrast }
+                ? value(.contrast, look.contrast) : look.contrast,
+            saturation: keyframes.contains { $0.property == .saturation }
+                ? value(.saturation, look.saturation) : look.saturation
+        )
+        return applyLook(effective, to: result)
     }
 
     /// The request API only accepts pixel buffers, so CIImages are rendered

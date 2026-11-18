@@ -25,6 +25,7 @@ data class ClipSegment(
     var volume: Float = 1f,
     var muted: Boolean = false,
     var transitionIn: CSTransition = CSTransition.NONE,
+    var keyframes: List<Keyframe> = emptyList(),  // clip-relative timeline ms
 ) {
     var startMs: Long = 0
     var endMs: Long = 0
@@ -53,7 +54,7 @@ data class Look(
 )
 
 /** Which bottom drawer is open in the editor screen. */
-enum class EditorDrawer { INSPECTOR, TEXT, STICKER, FILTER, TRANSITIONS, AUDIO }
+enum class EditorDrawer { INSPECTOR, TEXT, STICKER, FILTER, TRANSITIONS, AUDIO, KEYFRAMES }
 
 /**
  * Editing core: snapshot-based undo (clips + overlays, 50 steps), the same
@@ -129,14 +130,21 @@ class EditorViewModel : ViewModel() {
 
     fun splitAt(timecode: Long) {
         val target = clips.firstOrNull { timecode >= it.startMs + 100 && timecode <= it.endMs - 100 } ?: return
+        val splitLocalMs = timecode - target.startMs
+        val splitSourceMs = (splitLocalMs * target.speed).toLong()
+        val leftKfs = target.keyframes.filter { it.timeMs <= splitLocalMs }
+        val rightKfs = target.keyframes.filter { it.timeMs > splitLocalMs }
+            .map { it.copy(timeMs = it.timeMs - splitLocalMs) }
         mutate {
             val index = it.indexOfFirst { c -> c.id == target.id }
             val left = target.copy(id = System.nanoTime()).apply {
-                sourceDurationMs = timecode - target.startMs
+                sourceDurationMs = splitSourceMs
+                keyframes = leftKfs
             }
             val right = target.copy(id = System.nanoTime() + 1).apply {
-                sourceInMs = target.sourceInMs + (timecode - target.startMs)
-                sourceDurationMs = target.sourceDurationMs - left.sourceDurationMs
+                sourceInMs = target.sourceInMs + splitSourceMs
+                sourceDurationMs = target.sourceDurationMs - splitSourceMs
+                keyframes = rightKfs
             }
             it[index] = left; it.add(index + 1, right)
         }
@@ -175,6 +183,87 @@ class EditorViewModel : ViewModel() {
     fun delete(clipId: Long) {
         mutate { it.removeAll { c -> c.id == clipId } }
         selectedClipId = null
+    }
+
+    // Keyframe edits — objects are copied (never mutated in place) so the
+    // snapshot undo stack keeps real pre-edit states.
+
+    fun keyframesOf(clipId: Long, property: KeyframeProperty): List<Keyframe> =
+        clips.firstOrNull { it.id == clipId }?.keyframes
+            ?.filter { it.property == property }?.sortedBy { it.timeMs } ?: emptyList()
+
+    fun addKeyframe(clipId: Long, property: KeyframeProperty, value: Double, atTimelineMs: Long) {
+        mutate {
+            val index = it.indexOfFirst { c -> c.id == clipId }
+            if (index >= 0) {
+                val c = it[index]
+                val kf = Keyframe(
+                    id = System.nanoTime(), property = property,
+                    timeMs = atTimelineMs.coerceIn(0, c.timelineDurationMs),
+                    value = property.clamp(value),
+                )
+                it[index] = c.copy(keyframes = c.keyframes + kf)
+            }
+        }
+    }
+
+    fun updateKeyframe(clipId: Long, kf: Keyframe) {
+        mutate {
+            val index = it.indexOfFirst { c -> c.id == clipId }
+            if (index >= 0) {
+                val c = it[index]
+                it[index] = c.copy(keyframes = c.keyframes.map { if (it.id == kf.id) kf else it })
+            }
+        }
+    }
+
+    fun removeKeyframe(clipId: Long, kfId: Long) {
+        mutate {
+            val index = it.indexOfFirst { c -> c.id == clipId }
+            if (index >= 0) {
+                val c = it[index]
+                it[index] = c.copy(keyframes = c.keyframes.filterNot { k -> k.id == kfId })
+            }
+        }
+    }
+
+    fun removeKeyframes(clipId: Long, property: KeyframeProperty) {
+        mutate {
+            val index = it.indexOfFirst { c -> c.id == clipId }
+            if (index >= 0) {
+                val c = it[index]
+                it[index] = c.copy(keyframes = c.keyframes.filterNot { k -> k.property == property })
+            }
+        }
+    }
+
+    // Live drag support: snapshot once at gesture start (mirrors iOS).
+    private var pendingKeyframeUndo: List<ClipSegment>? = null
+
+    /** Starts an undo batch if one isn't already open (slider first tick). */
+    fun ensureKeyframeUndo() { if (pendingKeyframeUndo == null) pendingKeyframeUndo = clips }
+
+    fun beginKeyframeDrag() { pendingKeyframeUndo = clips }
+
+    fun endKeyframeDrag() {
+        pendingKeyframeUndo?.let {
+            undoStack.add(it); if (undoStack.size > 50) undoStack.removeFirst()
+            redoStack.clear(); syncFlags()
+        }
+        pendingKeyframeUndo = null
+    }
+
+    /** Live keyframe move during a drag — no undo, no relayout. */
+    fun updateKeyframeLive(clipId: Long, kf: Keyframe) {
+        // Open an undo batch on the first live tick if the caller (drag) did
+        // not already open one; the batch is committed by endKeyframeDrag().
+        if (pendingKeyframeUndo == null) pendingKeyframeUndo = clips
+        val index = clips.indexOfFirst { it.id == clipId }
+        if (index < 0) return
+        val c = clips[index]
+        val updated = c.copy(keyframes = c.keyframes.map { if (it.id == kf.id) kf else it })
+        val copy = clips.toMutableList(); copy[index] = updated
+        clips = copy
     }
 
     fun addText(text: String) {

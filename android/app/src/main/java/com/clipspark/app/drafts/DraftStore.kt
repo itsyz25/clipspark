@@ -5,6 +5,7 @@ import com.clipspark.app.editor.ClipSegment
 import com.clipspark.app.editor.CSTransition
 import com.clipspark.app.editor.EditorOverlay
 import com.clipspark.app.editor.EditorViewModel
+import com.clipspark.app.editor.Keyframe
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -26,6 +27,8 @@ object DraftStore {
         json.put("savedAt", System.currentTimeMillis())
         val clips = JSONArray()
         for (c in model.clips) {
+            val kfs = JSONArray()
+            for (kf in c.keyframes) kfs.put(kf.toJson().put("id", kf.id))
             clips.put(
                 JSONObject()
                     .put("uri", c.uri)
@@ -35,6 +38,7 @@ object DraftStore {
                     .put("volume", c.volume.toDouble())
                     .put("muted", c.muted)
                     .put("transition", c.transitionIn.name)
+                    .put("kfs", kfs)
             )
         }
         json.put("clips", clips)
@@ -103,6 +107,15 @@ object DraftStore {
                 )
                 clip.startMs = cursor
                 clip.endMs = cursor + clip.timelineDurationMs
+                // Keyframes are optional: drafts saved before keyframes still load.
+                val kfsArray = if (o.has("kfs")) o.getJSONArray("kfs") else null
+                if (kfsArray != null) {
+                    val restored = mutableListOf<Keyframe>()
+                    for (k in 0 until kfsArray.length()) {
+                        restored.add(Keyframe.fromJson(kfsArray.getJSONObject(k)))
+                    }
+                    clip.keyframes = restored
+                }
                 cursor = clip.endMs
                 clips.add(clip)
             }

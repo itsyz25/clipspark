@@ -50,6 +50,7 @@ object CSIcons {
     val Templates = Icons.Default.AutoAwesomeMotion
     val Home = Icons.Default.Home
     val Drafts = Icons.Default.DownloadDone
+    val Keyframe = Icons.Default.Diamond
 }
 
 /** Bottom tool chip (CapCut-style). */
