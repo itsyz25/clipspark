@@ -196,7 +196,7 @@ private fun Spacer(width: androidx.compose.ui.unit.Dp) =
 
 // MARK: - Keyframe drawer (mirrors iOS KeyframeDrawer.swift)
 
-private enum KeyframeVariationChoice(val label: String, val make: () -> KeyframeVariation) {
+private enum class KeyframeVariationChoice(val label: String, val make: () -> KeyframeVariation) {
     HOLD("Hold", { KeyframeVariation.Hold }),
     LINEAR("Linear", { KeyframeVariation.Linear }),
     EASE_IN("Ease In", { KeyframeVariation.Preset(EasingPreset.EASE_IN) }),

@@ -100,10 +100,11 @@ struct KeyframeDrawer: View {
             let range = property.range
             let span = max(clip.timelineDuration, 0.001)
 
-            func xPos(_ t: Double) -> CGFloat { CGFloat(t / span) * w }
-            func yPos(_ v: Double) -> CGFloat {
-                let frac = (v - range.lowerBound) / (range.upperBound - range.lowerBound)
-                return h * (1 - CGFloat(max(-0.25, min(1.25, frac))))
+            // Position helpers as closures — local `func` bodies are not
+            // allowed inside a ViewBuilder closure (explicit return).
+            let xPos: (Double) -> CGFloat = { CGFloat($0 / span) * w }
+            let yPos: (Double) -> CGFloat = { v in
+                h * (1 - CGFloat(max(-0.25, min(1.25, (v - range.lowerBound) / (range.upperBound - range.lowerBound)))))
             }
 
             ZStack {

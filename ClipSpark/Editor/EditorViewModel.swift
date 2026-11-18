@@ -323,7 +323,7 @@ final class EditorViewModel: ObservableObject {
                         params.setVolumeRamp(
                             fromStartVolume: Float(max(0, min(2, a.value))) * muteFactor,
                             toEndVolume: Float(max(0, min(2, b.value))) * muteFactor,
-                            forTimeRange: CMTimeRange(
+                            timeRange: CMTimeRange(
                                 start: CMTime(seconds: at + a.time, preferredTimescale: 600),
                                 duration: CMTime(seconds: max(0.01, b.time - a.time), preferredTimescale: 600)
                             )
