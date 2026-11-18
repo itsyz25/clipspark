@@ -97,9 +97,18 @@ fun EditorScreen(
 
     DisposableEffect(Unit) { onDispose { playback.release() } }
 
-    // Rebuild the preview playlist whenever the clip list changes.
-    LaunchedEffect(model.clips) {
-        if (model.clips.isNotEmpty()) playback.setClips(model.clips)
+    // Rebuild the preview playlist only when the timeline STRUCTURE changes
+    // (trim/speed/order/mute/transition). Keyframe and volume edits must not
+    // rebuild it, or every drag tick would restart playback.
+    val structureKey = model.clips.joinToString("|") {
+        "${it.id},${it.uri},${it.sourceInMs},${it.sourceDurationMs}," +
+            "${it.speed},${it.muted},${it.transitionIn.name}"
+    }
+    LaunchedEffect(structureKey) {
+        if (model.clips.isNotEmpty()) {
+            playback.setClips(model.clips)
+            playback.seekToTimelineMs(model.timecodeMs)
+        }
     }
     // Poll playhead position (~12 Hz) + evaluate keyframes for preview/volume.
     LaunchedEffect(playback) {
