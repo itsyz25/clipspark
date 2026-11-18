@@ -24,10 +24,13 @@ reference engine. No CapCut code, assets, names, or brand marks were copied.
 
 ## 2. Build check
 
-- iOS (IPA) and Android (APK) are compiled only by GitHub Actions — no Mac/Android SDK
-  on this machine. This report is updated with the run IDs when CI finishes.
-- Pre-push static audit performed (results in §4 mistake ledger); every issue found was
-  fixed before pushing.
+- iOS (IPA): GitHub Actions run **44289159037** — **SUCCESS** (commit `f0ec05c`, macOS runner, unsigned archive).
+- Android (APK): GitHub Actions run **44289158908** — **SUCCESS** (commit `f0ec05c`, Ubuntu runner, debug APK).
+- First attempt (`ae1d05d`) failed with exactly three compiler errors, all fixed in `f0ec05c`:
+  1. iOS: explicit `return` inside a `ViewBuilder` closure (local `func` helpers) → replaced with typed closures.
+  2. iOS: `setVolumeRamp` argument label is `timeRange:` (not `forTimeRange:`).
+  3. Android: Kotlin enum with constructor params requires `enum class` (wrote `enum`).
+- No local Mac/Android SDK on this machine: CI is the compiler, as documented in earlier units.
 
 ## 3. Offline audit
 
@@ -75,6 +78,7 @@ Grep over all app sources for `URLSession`, `NSURLConnection`, `http://`, `https
 
 ## 6. Verdict
 
-Static audit: **PASS** (all 15 findings fixed before push).
-Build verification: **PENDING CI** — updated below when the IPA/APK workflows finish.
+Static audit: **PASS** (all findings fixed before push; CI caught 3 additional errors, fixed).
+Build verification: **PASS** — IPA 44289159037, APK 44289158908 (commit `f0ec05c`).
 Offline verification: **PASS**.
+Release: **v1.0.1** (`ClipSpark-debug.apk`, `ClipSpark-unsigned.ipa`).
