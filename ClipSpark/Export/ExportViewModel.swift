@@ -50,10 +50,13 @@ final class ExportViewModel: ObservableObject {
             look: model.look
         )
 
-        // Bake overlays (text/stickers) into the exported frames, offline
+        // Bake overlays (text/stickers) into the exported frames, offline.
+        // Timing + transform + layer order match the preview exactly.
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
             postProcessingAsVideoLayer: makeVideoLayer(size: renderSize),
-            in: makeOverlayLayer(overlays: model.overlays, size: renderSize)
+            in: makeOverlayLayer(
+                overlays: model.overlays, size: renderSize, duration: built.duration
+            )
         )
 
         let preset: String
@@ -117,12 +120,18 @@ final class ExportViewModel: ObservableObject {
     }
 
     /// Preview canvas ≈ 400pt tall; scale overlay geometry proportionally.
-    private func makeOverlayLayer(overlays: [EditorViewModel.EditorOverlay], size: CGSize) -> CALayer {
+    /// Layers are added in array order, so the stack matches the preview
+    /// (last overlay = frontmost). Each overlay gets its own timeline window
+    /// via an opacity keyframe animation in composition time.
+    private func makeOverlayLayer(
+        overlays: [EditorViewModel.EditorOverlay], size: CGSize, duration: Double
+    ) -> CALayer {
         let container = CALayer()
         container.frame = CGRect(origin: .zero, size: size)
         let scale = size.height / 400
 
         for overlay in overlays {
+            guard overlay.isVisible(at: 0) || overlay.start < duration else { continue }
             let itemLayer: CALayer
             switch overlay.kind {
             case .text(let text):
@@ -136,6 +145,7 @@ final class ExportViewModel: ObservableObject {
                 textLayer.foregroundColor = UIColor(overlay.color).cgColor
                 textLayer.alignmentMode = .center
                 textLayer.contentsGravity = .center
+                textLayer.isWrapped = false
                 let bounds = (text as NSString).boundingRect(
                     with: CGSize(width: size.width * 0.9, height: .greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
@@ -161,17 +171,72 @@ final class ExportViewModel: ObservableObject {
                 itemLayer = imageLayer
             }
 
-            // Position: normalized center coordinates → layer frame center
-            let itemSize = itemLayer.bounds.size
-            itemLayer.frame.origin = CGPoint(
-                x: overlay.x * size.width - itemSize.width / 2,
-                y: overlay.y * size.height - itemSize.height / 2
+            // Center anchor; CA layers are bottom-left origin, so flip the
+            // normalized top-down y from the preview.
+            itemLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            itemLayer.bounds = CGRect(origin: .zero, size: itemLayer.bounds.size)
+            itemLayer.position = CGPoint(
+                x: overlay.x * size.width,
+                y: (1 - overlay.y) * size.height
             )
+            let transform = CATransform3DConcat(
+                CATransform3DMakeScale(overlay.scale, overlay.scale, 1),
+                CATransform3DMakeRotation(CGFloat(overlay.rotation * .pi / 180), 0, 0, 1)
+            )
+            itemLayer.transform = transform
             itemLayer.shadowColor = UIColor.black.cgColor
             itemLayer.shadowOpacity = 0.5
             itemLayer.shadowRadius = 2
+
+            let alpha = CGFloat(max(0, min(1, overlay.opacity)))
+            if let timing = visibilityAnimation(
+                overlay: overlay, total: duration, opacity: alpha
+            ) {
+                itemLayer.opacity = 0
+                itemLayer.add(timing, forKey: "visibility")
+            } else {
+                itemLayer.opacity = Float(alpha)
+            }
             container.addSublayer(itemLayer)
         }
         return container
+    }
+
+    /// Opacity keyframes that make a layer visible only inside its window.
+    private func visibilityAnimation(
+        overlay: EditorViewModel.EditorOverlay, total: Double, opacity: CGFloat
+    ) -> CAKeyframeAnimation? {
+        guard total > 0.01 else { return nil }
+        let shownStart = max(0, min(overlay.start, total))
+        let shownEnd = max(shownStart, min(overlay.endTime, total))
+        let startsAtZero = shownStart <= 0.0001
+        let endsAtTotal = shownEnd >= total - 0.0001
+        guard !(startsAtZero && endsAtTotal) else { return nil }
+
+        var times: [Double] = []
+        var alphas: [CGFloat] = []
+        if startsAtZero {
+            times.append(0); alphas.append(opacity)
+        } else {
+            times.append(0); alphas.append(0)
+            times.append(shownStart); alphas.append(opacity)
+        }
+        if endsAtTotal {
+            times.append(max(shownEnd, times.last! + 0.0001)); alphas.append(opacity)
+            times.append(total); alphas.append(opacity)
+        } else {
+            times.append(max(shownEnd, times.last! + 0.0001)); alphas.append(0)
+            times.append(max(total, times.last! + 0.0001)); alphas.append(0)
+        }
+
+        let anim = CAKeyframeAnimation(keyPath: "opacity")
+        anim.values = alphas.map { NSNumber(value: Double($0)) }
+        anim.keyTimes = times.map { NSNumber(value: $0 / total) }
+        anim.beginTime = AVCoreAnimationBeginTimeAtZero
+        anim.duration = total
+        anim.isRemovedOnCompletion = false
+        anim.fillMode = .both
+        anim.calculationMode = .linear
+        return anim
     }
 }

@@ -45,6 +45,9 @@ object CSIcons {
     val Export = Icons.Default.Share
     val Delete = Icons.Default.Delete
     val Duplicate = Icons.Default.ContentCopy
+    val LayerForward = Icons.Default.FlipToFront
+    val LayerBackward = Icons.Default.FlipToBack
+    val Trim = Icons.Default.ContentCut
     val Volume = Icons.Default.VolumeUp
     val Settings = Icons.Default.Settings
     val Templates = Icons.Default.AutoAwesomeMotion

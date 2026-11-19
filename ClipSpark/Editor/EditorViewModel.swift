@@ -43,20 +43,38 @@ final class EditorViewModel: ObservableObject {
     }
 
     /// Text/sticker placed over the canvas. Position is normalized (0...1).
+    /// Overlays are a stack: array order is z-order (last = frontmost), and
+    /// each one has its own timeline window so several can overlap freely.
     struct EditorOverlay: Identifiable, Equatable {
         enum Kind: Equatable { case text(String); case sticker(String) } // sticker = SF Symbol name
-        let id = UUID()
+        var id = UUID()
         var kind: Kind
         var color: Color = .white
-        var fontSize: CGFloat = 20
+        /// Authored against a 400 pt-tall reference canvas (both preview and
+        /// export scale by height/400, so the ratio always matches).
+        var fontSize: CGFloat = 34
         var x: CGFloat = 0.5
         var y: CGFloat = 0.5
         var isBold: Bool = true
+        // Independent transform + timing (multiple, overlapping overlays)
+        var scale: CGFloat = 1
+        var rotation: Double = 0          // degrees, clockwise
+        var opacity: Double = 1
+        var start: Double = 0             // timeline seconds
+        var duration: Double? = nil       // nil → until the end of the project
+
+        /// Timeline time at which the overlay stops being visible.
+        var endTime: Double { duration.map { start + $0 } ?? .greatestFiniteMagnitude }
+
+        func isVisible(at t: Double) -> Bool { t >= start && t <= endTime }
 
         static func == (lhs: EditorOverlay, rhs: EditorOverlay) -> Bool {
             lhs.id == rhs.id && lhs.kind == rhs.kind
                 && lhs.x == rhs.x && lhs.y == rhs.y
                 && lhs.fontSize == rhs.fontSize && lhs.color == rhs.color
+                && lhs.scale == rhs.scale && lhs.rotation == rhs.rotation
+                && lhs.opacity == rhs.opacity && lhs.start == rhs.start
+                && lhs.duration == rhs.duration
         }
 
         var textValue: String? {
@@ -75,6 +93,11 @@ final class EditorViewModel: ObservableObject {
         var brightness: Double = 0   // -0.2...0.2  (CI brightness)
         var contrast: Double = 1     // 0.5...1.5
         var saturation: Double = 1   // 0...2
+        /// Shutter-style motion blur (0 = off). Radius scales with the amount,
+        /// direction comes from `motionBlurAngle`. Real Core Image filter, so
+        /// the preview and the exported file are identical.
+        var motionBlur: Double = 0        // 0...1
+        var motionBlurAngle: Double = 0   // degrees, 0...180
     }
 
     struct ProjectState: Equatable {
@@ -92,6 +115,8 @@ final class EditorViewModel: ObservableObject {
     @Published var isPlaying = false
     @Published var pixelsPerSecond: CGFloat = 40
     @Published var selectedClipID: UUID?
+    /// Overlay selection is exclusive with clip selection (contextual toolbar).
+    @Published var selectedOverlayID: UUID?
     @Published var canUndo = false
     @Published var canRedo = false
 
@@ -550,7 +575,26 @@ final class EditorViewModel: ObservableObject {
 
     func select(_ clip: ClipSegment?) {
         selectedClipID = clip?.id
-        if clip != nil { CSHaptics.tick() }
+        if clip != nil {
+            selectedOverlayID = nil
+            CSHaptics.tick()
+        }
+    }
+
+    // MARK: - Timeline zoom (pinch)
+
+    static let minPixelsPerSecond: CGFloat = 12
+    static let maxPixelsPerSecond: CGFloat = 200
+
+    func zoomTimeline(by factor: CGFloat) {
+        pixelsPerSecond = min(
+            Self.maxPixelsPerSecond,
+            max(Self.minPixelsPerSecond, pixelsPerSecond * max(0.2, factor))
+        )
+    }
+
+    func setZoom(_ value: CGFloat) {
+        pixelsPerSecond = min(Self.maxPixelsPerSecond, max(Self.minPixelsPerSecond, value))
     }
 
     func beginTrim() { trimBaseline = currentState }
@@ -757,31 +801,135 @@ final class EditorViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Overlay edits
+    // MARK: - Overlay edits (multiple, stacked, independently timed)
 
-    func addText(_ text: String) {
-        mutateOverlays { list in
-            list.append(EditorOverlay(kind: .text(text)))
-        }
+    /// Default on-screen life for a new overlay: from the playhead, 3 s long
+    /// (clamped to the project) so several overlays can overlap freely.
+    private var defaultOverlayWindow: (start: Double, duration: Double?) {
+        let total = compositionDuration > 0 ? compositionDuration : 5
+        let start = min(max(0, timecode), max(0, total - 0.5))
+        let remaining = total - start
+        return (start, remaining > 0.5 ? min(3, remaining) : nil)
+    }
+
+    func addText(_ text: String, color: Color? = nil) {
+        let window = defaultOverlayWindow
+        var overlay = EditorOverlay(kind: .text(text))
+        overlay.start = window.start
+        overlay.duration = window.duration
+        if let color { overlay.color = color }
+        mutateOverlays { $0.append(overlay) }
+        selectOverlay(overlay)
     }
 
     func addSticker(_ symbolName: String) {
-        mutateOverlays { list in
-            list.append(EditorOverlay(kind: .sticker(symbolName), fontSize: 48))
+        let window = defaultOverlayWindow
+        var overlay = EditorOverlay(kind: .sticker(symbolName), fontSize: 60)
+        overlay.start = window.start
+        overlay.duration = window.duration
+        mutateOverlays { $0.append(overlay) }
+        selectOverlay(overlay)
+    }
+
+    var selectedOverlay: EditorOverlay? {
+        guard let selectedOverlayID else { return nil }
+        return overlays.first { $0.id == selectedOverlayID }
+    }
+
+    func selectOverlay(_ overlay: EditorOverlay?) {
+        selectedOverlayID = overlay?.id
+        if overlay != nil {
+            selectedClipID = nil
+            CSHaptics.tick()
         }
     }
 
+    func deselectAll() {
+        selectedClipID = nil
+        selectedOverlayID = nil
+    }
+
+    /// Overlays visible at a given timeline time, back-to-front (z-order).
+    func visibleOverlays(at t: Double) -> [EditorOverlay] {
+        overlays.filter { $0.isVisible(at: t) }
+    }
+
+    /// Committed overlay edit (one undo step). Used by drawers/pickers.
     func updateOverlay(_ overlay: EditorOverlay) {
+        mutateOverlays { list in
+            if let index = list.firstIndex(where: { $0.id == overlay.id }) {
+                list[index] = overlay
+            }
+        }
+    }
+
+    /// Live gesture path (drag / pinch / rotate): no history write per tick.
+    func updateOverlayLive(_ overlay: EditorOverlay) {
         if let index = overlays.firstIndex(where: { $0.id == overlay.id }) {
             overlays[index] = overlay
         }
+    }
+
+    func duplicateOverlay(_ overlay: EditorOverlay) {
+        var copy = overlay
+        copy.id = UUID()
+        copy.x = min(1, overlay.x + 0.04)
+        copy.y = min(1, overlay.y + 0.04)
+        mutateOverlays { $0.append(copy) }
+        selectOverlay(copy)
     }
 
     func deleteOverlay(_ overlay: EditorOverlay) {
         mutateOverlays { list in
             list.removeAll { $0.id == overlay.id }
         }
+        if selectedOverlayID == overlay.id { selectedOverlayID = nil }
         CSHaptics.tick()
+    }
+
+    // MARK: - Overlay stacking + timing
+
+    func bringOverlayForward(_ overlay: EditorOverlay) { moveOverlay(overlay, by: 1) }
+    func sendOverlayBackward(_ overlay: EditorOverlay) { moveOverlay(overlay, by: -1) }
+
+    /// Array order is z-order: later == drawn on top.
+    private func moveOverlay(_ overlay: EditorOverlay, by delta: Int) {
+        guard let index = overlays.firstIndex(where: { $0.id == overlay.id }) else { return }
+        let target = index + delta
+        guard overlays.indices.contains(target) else { return }
+        mutateOverlays { $0.swapAt(index, target) }
+        CSHaptics.tick()
+    }
+
+    /// Trim the overlay's in-point to the given timeline time.
+    func trimOverlayStart(_ overlay: EditorOverlay, at t: Double) {
+        let end = overlay.endTime
+        let newStart = min(max(0, t), max(0, end - 0.1))
+        var copy = overlay
+        copy.start = newStart
+        if overlay.duration != nil { copy.duration = max(0.1, end - newStart) }
+        updateOverlayLive(copy)
+    }
+
+    /// Trim the overlay's out-point to the given timeline time.
+    func trimOverlayEnd(_ overlay: EditorOverlay, at t: Double) {
+        var copy = overlay
+        copy.duration = max(0.1, t - overlay.start)
+        updateOverlayLive(copy)
+    }
+
+    /// "Start here" / "End here" at the playhead (one undo step each).
+    func overlayStartAtPlayhead(_ overlay: EditorOverlay) {
+        let end = overlay.endTime
+        var copy = overlay
+        copy.start = min(max(0, timecode), max(0, end - 0.1))
+        updateOverlay(copy)
+    }
+
+    func overlayEndAtPlayhead(_ overlay: EditorOverlay) {
+        var copy = overlay
+        copy.duration = max(0.1, timecode - overlay.start)
+        updateOverlay(copy)
     }
 
     deinit {

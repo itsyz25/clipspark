@@ -3,6 +3,7 @@ package com.clipspark.app.editor
 import android.content.Context
 import android.net.Uri
 import androidx.media3.common.C
+import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -58,6 +59,19 @@ class PlaybackController(context: Context) {
 
     /** Live volume (used by keyframed volume evaluation in the poll loop). */
     fun setVolume(v: Float) { player.volume = v.coerceIn(0f, 1f) }
+
+    /**
+     * GPU look effects for the preview — exactly the same list the exporter
+     * builds, so filters, adjust and motion blur are WYSIWYG.
+     */
+    fun setVideoEffects(effects: List<Effect>) {
+        try {
+            player.setVideoEffects(effects)
+        } catch (e: Exception) {
+            // A device whose GL stack rejects the pipeline keeps playing
+            // ungraded rather than losing the preview entirely.
+        }
+    }
 
     /** Timeline timecode → playlist seek. */
     fun seekToTimelineMs(t: Long) {

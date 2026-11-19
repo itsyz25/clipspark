@@ -1,8 +1,9 @@
 import Photos
 import SwiftUI
 
-/// Editor screen skeleton: canvas → state strip → timeline → tool dock
-/// (dock is static in Unit 4; functional drawers arrive in Unit 6).
+/// Editor screen: canvas → transport strip → timeline → contextual tools →
+/// drawer. The tool row is *contextual*: it only shows actions that apply to
+/// what is currently selected (nothing / video clip / audio / text / overlay).
 struct EditorView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = EditorViewModel()
@@ -20,128 +21,27 @@ struct EditorView: View {
     }()
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 1. Preview canvas + draggable overlays (text/stickers)
-            ZStack {
-                CanvasPlayerView(player: model.player)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .background(.black)
-                    .clipShape(RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous))
-                    .onTapGesture { model.togglePlay() }
-                    .accessibilityLabel(model.isPlaying ? "Pause preview" : "Play preview")
-
-                GeometryReader { canvas in
-                    ForEach(model.overlays) { overlay in
-                        OverlayItem(
-                            overlay: overlay,
-                            model: model,
-                            canvasSize: canvas.size
-                        )
-                    }
-                }
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                canvas
+                transportStrip
+                TimelineView(model: model)
+                    .frame(height: TimelineView.preferredHeight(overlayCount: model.overlays.count))
+                    .padding(.horizontal, CSSpacing.s)
+                    .padding(.vertical, CSSpacing.xs)
+                    .background(CSTheme.bg)
+                contextBar
+                Spacer(minLength: 0)
             }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .padding(CSSpacing.s)
 
-            // 2. State strip: undo/redo · timecode · export
-            HStack {
-                Button { model.undo() } label: {
-                    Image(systemName: CSIcon.undo.rawValue)
-                        .foregroundStyle(model.canUndo ? CSTheme.textPrimary : CSTheme.textSecondary)
-                }
-                .disabled(!model.canUndo)
-                Button { model.redo() } label: {
-                    Image(systemName: CSIcon.redo.rawValue)
-                        .foregroundStyle(model.canRedo ? CSTheme.textPrimary : CSTheme.textSecondary)
-                }
-                .disabled(!model.canRedo)
-                Button { model.splitAtPlayhead() } label: {
-                    Image(systemName: CSIcon.split.rawValue)
-                        .foregroundStyle(CSTheme.textPrimary)
-                }
-                .accessibilityLabel("Split at playhead")
-                Spacer()
-                Text("\(model.timecodeText) / \(totalText)")
-                    .font(CSType.timecode)
-                    .foregroundStyle(CSTheme.accent)
-                    .monospacedDigit()
-                Spacer()
-                Button {
-                    showExport = true
-                } label: {
-                    Image(systemName: CSIcon.export.rawValue)
-                        .foregroundStyle(CSTheme.accent)
-                }
-                .accessibilityLabel("Export project")
+            if let drawer = activeDrawer {
+                drawerView(drawer)
+                    .frame(maxHeight: 300)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(1)
             }
-            .font(.system(size: 18))
-            .padding(.horizontal, CSSpacing.l)
-            .padding(.vertical, CSSpacing.s)
-
-            // 3. Timeline
-            TimelineView(model: model)
-                .frame(height: 72)
-                .padding(.vertical, CSSpacing.s)
-                .background(CSTheme.surface)
-
-            // 4. Tool dock — chips open drawers; Edit opens clip inspector
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: CSSpacing.s) {
-                    CSToolChip(.editClip, "Edit") {
-                        if model.selectedClip == nil, let first = model.clips.first {
-                            model.select(first)
-                        }
-                        activeDrawer = .inspector
-                    }
-                    CSToolChip(.text, "Text") { activeDrawer = .text }
-                    CSToolChip(.sticker, "Sticker") { activeDrawer = .sticker }
-                    CSToolChip(.filter, "Filters") { activeDrawer = .filter }
-                    CSToolChip(.transition, "Transitions") {
-                        if model.selectedClip == nil, let first = model.clips.dropFirst().first {
-                            model.select(first)
-                        }
-                        activeDrawer = .transitions
-                    }
-                    CSToolChip(.audio, "Audio") { activeDrawer = .audio }
-                    CSToolChip(.keyframe, "Keyframes") {
-                        if model.selectedClip == nil, let first = model.clips.first {
-                            model.select(first)
-                        }
-                        activeDrawer = .keyframes
-                    }
-                    CSToolChip(.speed, "Speed") {
-                        if model.selectedClip == nil, let first = model.clips.first {
-                            model.select(first)
-                        }
-                        activeDrawer = .inspector
-                    }
-                }
-                .padding(.horizontal, CSSpacing.l)
-            }
-            .padding(.vertical, CSSpacing.s)
-            .background(CSTheme.surface)
-
-            Spacer(minLength: 0)
-
-            // 5. Drawer layer: tool drawers first, then clip inspector
-            Group {
-                switch activeDrawer {
-                case .text: TextDrawer(model: model, onClose: { activeDrawer = nil })
-                case .sticker: StickerDrawer(model: model, onClose: { activeDrawer = nil })
-                case .filter: FilterDrawer(model: model, onClose: { activeDrawer = nil })
-                case .transitions: TransitionsDrawer(model: model, onClose: { activeDrawer = nil })
-                case .audio: AudioDrawer(model: model, onClose: { activeDrawer = nil })
-                case .keyframes: KeyframeDrawer(model: model, onClose: { activeDrawer = nil })
-                case .inspector:
-                    if let selected = model.selectedClip {
-                        ClipInspector(model: model, clip: selected)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                case nil: EmptyView()
-                }
-            }
-            .animation(CSMotion.easeOut, value: activeDrawer)
         }
+        .animation(CSMotion.easeOut, value: activeDrawer)
         .background(CSTheme.bg.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .toolbar {
@@ -164,7 +64,6 @@ struct EditorView: View {
         }
         .onDisappear {
             model.player.pause()
-            // Autosave: every editor session persists as a draft (offline JSON)
             if let draft = model.toSavedDraft(name: draftName, id: savedDraft?.id) {
                 DraftStore.shared.save(draft)
             }
@@ -174,8 +73,195 @@ struct EditorView: View {
         }
     }
 
-    private var totalText: String {
-        let total = Int(model.compositionDuration.rounded())
-        return String(format: "%02d:%02d", total / 60, total % 60)
+    // MARK: - Canvas
+
+    private var canvas: some View {
+        ZStack {
+            CanvasPlayerView(player: model.player)
+                .background(.black)
+
+            GeometryReader { geo in
+                ForEach(model.visibleOverlays(at: model.timecode)) { overlay in
+                    OverlayItem(overlay: overlay, model: model, canvasSize: geo.size)
+                }
+            }
+
+            if model.selectedClip != nil {
+                RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous)
+                    .strokeBorder(CSTheme.accent, lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+
+            if !model.isPlaying {
+                Image(systemName: CSIcon.play.rawValue)
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(color: .black.opacity(0.4), radius: 4)
+                    .allowsHitTesting(false)
+            }
+        }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: CSRadius.card / 2, style: .continuous))
+        .padding(.horizontal, CSSpacing.s)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Tapping the frame clears a selection first; otherwise it plays.
+            if model.selectedClip != nil || model.selectedOverlay != nil {
+                model.deselectAll()
+                activeDrawer = nil
+            } else {
+                model.togglePlay()
+            }
+        }
+        .accessibilityLabel(model.isPlaying ? "Pause preview" : "Play preview")
+    }
+
+    // MARK: - Transport strip
+
+    private var transportStrip: some View {
+        HStack(spacing: CSSpacing.m) {
+            Button { model.undo() } label: {
+                Image(systemName: CSIcon.undo.rawValue)
+                    .foregroundStyle(model.canUndo ? CSTheme.textPrimary : CSTheme.textSecondary)
+            }
+            .disabled(!model.canUndo)
+
+            Button { model.redo() } label: {
+                Image(systemName: CSIcon.redo.rawValue)
+                    .foregroundStyle(model.canRedo ? CSTheme.textPrimary : CSTheme.textSecondary)
+            }
+            .disabled(!model.canRedo)
+
+            Button { model.splitAtPlayhead() } label: {
+                Image(systemName: CSIcon.split.rawValue)
+                    .foregroundStyle(CSTheme.textPrimary)
+            }
+            .accessibilityLabel("Split at playhead")
+
+            Spacer()
+
+            Text("\(model.timecodeText) / \(model.totalText)")
+                .font(CSType.timecode)
+                .foregroundStyle(CSTheme.accent)
+                .monospacedDigit()
+
+            Spacer()
+
+            Button {
+                showExport = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: CSIcon.export.rawValue)
+                    Text("Export").font(CSType.chip)
+                }
+                .foregroundStyle(CSTheme.accent)
+            }
+            .accessibilityLabel("Export project")
+        }
+        .font(.system(size: 18))
+        .padding(.horizontal, CSSpacing.l)
+        .padding(.vertical, CSSpacing.s)
+    }
+
+    // MARK: - Contextual tool bar
+
+    private enum ContextState { case none, video, audio, text, overlay }
+
+    private var contextState: ContextState {
+        if activeDrawer == .audio { return .audio }
+        if let overlay = model.selectedOverlay {
+            return overlay.textValue != nil ? .text : .overlay
+        }
+        if model.selectedClip != nil { return .video }
+        return .none
+    }
+
+    private var contextBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: CSSpacing.s) {
+                switch contextState {
+                case .none:
+                    chip(.split, "Split") { model.splitAtPlayhead() }
+                    chip(.text, "Text") { activeDrawer = .text }
+                    chip(.sticker, "Stickers") { activeDrawer = .sticker }
+                    chip(.audio, "Audio") { activeDrawer = .audio }
+                    chip(.filter, "Filters") { activeDrawer = .filter }
+                    chip(.transition, "Transitions") { activeDrawer = .transitions }
+
+                case .video:
+                    chip(.split, "Split") { model.splitAtPlayhead() }
+                    chip(.volume, "Volume") { activeDrawer = .audio }
+                    chip(.speed, "Speed") { activeDrawer = .inspector }
+                    chip(.keyframe, "Keyframes") { activeDrawer = .keyframes }
+                    chip(.filter, "Effects") { activeDrawer = .filter }
+                    chip(.transition, "Transitions") { activeDrawer = .transitions }
+                    chip(.duplicate, "Duplicate") { if let c = model.selectedClip { model.duplicate(c) } }
+                    chip(.delete, "Delete", danger: true) { if let c = model.selectedClip { model.delete(c) } }
+
+                case .audio:
+                    chip(.volume, "Volume") { activeDrawer = .audio }
+                    chip(.split, "Split") { model.splitAtPlayhead() }
+                    chip(.duplicate, "Duplicate") { if let c = model.selectedClip { model.duplicate(c) } }
+                    chip(.delete, "Delete", danger: true) { if let c = model.selectedClip { model.delete(c) } }
+
+                case .text:
+                    chip(.text, "Edit") { activeDrawer = .overlay }
+                    chip(.adjust, "Style") { activeDrawer = .overlay }
+                    chip(.overlay, "Layer +") { forward() }
+                    chip(.overlay, "Layer −") { backward() }
+                    chip(.trim, "Start here") { if let o = model.selectedOverlay { model.overlayStartAtPlayhead(o) } }
+                    chip(.trim, "End here") { if let o = model.selectedOverlay { model.overlayEndAtPlayhead(o) } }
+                    chip(.duplicate, "Duplicate") { if let o = model.selectedOverlay { model.duplicateOverlay(o) } }
+                    chip(.delete, "Delete", danger: true) { if let o = model.selectedOverlay { model.deleteOverlay(o) } }
+
+                case .overlay:
+                    chip(.overlay, "Layer +") { forward() }
+                    chip(.overlay, "Layer −") { backward() }
+                    chip(.trim, "Start here") { if let o = model.selectedOverlay { model.overlayStartAtPlayhead(o) } }
+                    chip(.trim, "End here") { if let o = model.selectedOverlay { model.overlayEndAtPlayhead(o) } }
+                    chip(.duplicate, "Duplicate") { if let o = model.selectedOverlay { model.duplicateOverlay(o) } }
+                    chip(.delete, "Delete", danger: true) { if let o = model.selectedOverlay { model.deleteOverlay(o) } }
+                }
+            }
+            .padding(.horizontal, CSSpacing.l)
+        }
+        .frame(height: 62)
+        .background(CSTheme.surface)
+    }
+
+    private func forward() {
+        if let o = model.selectedOverlay { model.bringOverlayForward(o) }
+    }
+
+    private func backward() {
+        if let o = model.selectedOverlay { model.sendOverlayBackward(o) }
+    }
+
+    private func chip(_ icon: CSIcon, _ label: String, danger: Bool = false, action: @escaping () -> Void) -> some View {
+        CSToolChip(icon, label, action: action)
+            .overlay(alignment: .bottom) {
+                if danger {
+                    Capsule().fill(CSTheme.danger.opacity(0.6)).frame(height: 2).padding(.horizontal, 12)
+                }
+            }
+    }
+
+    // MARK: - Drawers
+
+    @ViewBuilder
+    private func drawerView(_ drawer: EditorDrawer) -> some View {
+        switch drawer {
+        case .text: TextDrawer(model: model, onClose: { activeDrawer = nil })
+        case .sticker: StickerDrawer(model: model, onClose: { activeDrawer = nil })
+        case .filter: FilterDrawer(model: model, onClose: { activeDrawer = nil })
+        case .transitions: TransitionsDrawer(model: model, onClose: { activeDrawer = nil })
+        case .audio: AudioDrawer(model: model, onClose: { activeDrawer = nil })
+        case .keyframes: KeyframeDrawer(model: model, onClose: { activeDrawer = nil })
+        case .overlay: OverlayDrawer(model: model, onClose: { activeDrawer = nil })
+        case .inspector:
+            if let selected = model.selectedClip {
+                ClipInspector(model: model, clip: selected)
+            }
+        }
     }
 }

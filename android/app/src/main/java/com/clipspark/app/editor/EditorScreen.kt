@@ -7,21 +7,19 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -34,7 +32,7 @@ import com.clipspark.app.drafts.DraftStore
 import kotlinx.coroutines.delay
 import java.io.File
 
-/** Editor screen: Media3 canvas → state strip → timeline → tool dock → drawers. */
+/** Editor screen: canvas + overlays → transport → timeline → contextual tools → drawer. */
 
 data class ExportUi(
     val running: Boolean = true,
@@ -81,6 +79,8 @@ private fun evaluatePreviewVolume(model: EditorViewModel): Float {
     return v.coerceIn(0.0, 1.0).toFloat()
 }
 
+private enum class ContextState { NONE, VIDEO, AUDIO, TEXT, OVERLAY }
+
 @Composable
 fun EditorScreen(
     model: EditorViewModel,
@@ -95,7 +95,18 @@ fun EditorScreen(
     var draftSaved by remember { mutableStateOf<String?>(null) }
     var previewFx by remember { mutableStateOf(PreviewFx()) }
 
-    DisposableEffect(Unit) { onDispose { playback.release() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            playback.release()
+            exporter.cancel()
+        }
+    }
+
+    fun seekTo(ms: Long) {
+        val clamped = ms.coerceIn(0L, model.totalMs().coerceAtLeast(0L))
+        playback.seekToTimelineMs(clamped)
+        model.updateTimecode(clamped)
+    }
 
     // Rebuild the preview playlist only when the timeline STRUCTURE changes
     // (trim/speed/order/mute/transition). Keyframe and volume edits must not
@@ -109,6 +120,10 @@ fun EditorScreen(
             playback.setClips(model.clips)
             playback.seekToTimelineMs(model.timecodeMs)
         }
+    }
+    // Preview look + motion blur: the exact same GL effect list the exporter uses.
+    LaunchedEffect(model.look) {
+        playback.setVideoEffects(buildLookEffects(model.look))
     }
     // Poll playhead position (~12 Hz) + evaluate keyframes for preview/volume.
     LaunchedEffect(playback) {
@@ -132,131 +147,256 @@ fun EditorScreen(
         if (draftSaved != null) { delay(1500); draftSaved = null }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(CS.BG)
-    ) {
-        // 1. Preview canvas (Media3 PlayerView, no controls — custom UI).
-        // Keyframes transform the video layer only (the play icon stays put).
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .background(Color.Black)
-                .clickable { if (playback.isPlaying) playback.pause() else playback.play() }
-        ) {
+    val contextState: ContextState = when {
+        drawer == EditorDrawer.AUDIO -> ContextState.AUDIO
+        model.selectedOverlay?.text != null -> ContextState.TEXT
+        model.selectedOverlay != null -> ContextState.OVERLAY
+        model.selectedClipId != null -> ContextState.VIDEO
+        else -> ContextState.NONE
+    }
+
+    Box(Modifier.fillMaxSize().background(CS.BG)) {
+        Column(Modifier.fillMaxSize()) {
+            // ── Top bar: back / undo / redo / split / save / timecode / export ──
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("‹", color = CS.TextPrimary, fontSize = 24.sp,
+                    modifier = Modifier.clickable { onBack() })
+                Spacer(Modifier.width(10.dp))
+                Icon(CSIcons.Undo, "Undo",
+                    tint = if (model.canUndo) CS.TextPrimary else CS.TextSecondary,
+                    modifier = Modifier.clickable { model.undo() })
+                Spacer(Modifier.width(10.dp))
+                Icon(CSIcons.Redo, "Redo",
+                    tint = if (model.canRedo) CS.TextPrimary else CS.TextSecondary,
+                    modifier = Modifier.clickable { model.redo() })
+                Spacer(Modifier.width(10.dp))
+                Icon(CSIcons.Split, "Split at playhead", tint = CS.TextPrimary,
+                    modifier = Modifier.clickable { model.splitAt(model.timecodeMs) })
+                Spacer(Modifier.width(10.dp))
+                Icon(CSIcons.Drafts, "Save draft", tint = CS.TextPrimary,
+                    modifier = Modifier.clickable {
+                        val name = "Draft ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())}"
+                        DraftStore.save(context, model, name)
+                        draftSaved = name
+                    })
+                Spacer(Modifier.weight(1f))
+                Text("${model.timecodeText()} / ${model.timecodeText(model.totalMs())}",
+                    color = CS.Accent, fontSize = 11.sp)
+                draftSaved?.let {
+                    Spacer(Modifier.width(6.dp))
+                    Text("Saved ✓", color = CS.Success, fontSize = 11.sp)
+                }
+                Spacer(Modifier.weight(1f))
+                Icon(CSIcons.Export, "Export", tint = CS.Accent,
+                    modifier = Modifier.clickable {
+                        if (exportState == null) startExport(context, model, exporter) { exportState = it }
+                    })
+            }
+
+            // ── Preview canvas (weight fills the space the timeline leaves) ──
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    val fitsWidth = maxWidth / maxHeight > 16f / 9f
+                    val canvasModifier = if (fitsWidth) {
+                        Modifier.fillMaxHeight().aspectRatio(16f / 9f)
+                    } else {
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                    }
+                    Box(
+                        canvasModifier
+                            .clipToBounds()
+                            .background(Color.Black)
+                            .clickable {
+                                if (model.selectedClipId != null || model.selectedOverlayId != null) {
+                                    model.deselectAll()
+                                    drawer = null
+                                } else if (playback.isPlaying) {
+                                    playback.pause()
+                                } else {
+                                    playback.play()
+                                }
+                            }
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = previewFx.scale
+                                    scaleY = previewFx.scale
+                                    rotationZ = previewFx.rotation
+                                    translationX = previewFx.posX * size.width
+                                    translationY = previewFx.posY * size.height
+                                    alpha = previewFx.opacity
+                                }
+                        ) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    PlayerView(ctx).apply {
+                                        useController = false
+                                        setShutterBackgroundColor(android.graphics.Color.BLACK)
+                                        player = playback.player
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+
+                        // Text / sticker stack (independent transforms + timing).
+                        OverlayLayer(model, Modifier.fillMaxSize())
+
+                        if (!isPlayingState) {
+                            Icon(
+                                CSIcons.Play, "Play",
+                                tint = Color.White.copy(alpha = 0.9f),
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .size(48.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── Contextual tool bar (only what applies to the selection) ──
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .background(CS.Surface)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                when (contextState) {
+                    ContextState.NONE -> {
+                        CSToolChip(CSIcons.Split, "Split") { model.splitAt(model.timecodeMs) }
+                        CSToolChip(CSIcons.Text, "Text") { drawer = EditorDrawer.TEXT }
+                        CSToolChip(CSIcons.Sticker, "Stickers") { drawer = EditorDrawer.STICKER }
+                        CSToolChip(CSIcons.Audio, "Audio") { drawer = EditorDrawer.AUDIO }
+                        CSToolChip(CSIcons.Filter, "Filters") { drawer = EditorDrawer.FILTER }
+                        CSToolChip(CSIcons.Transitions, "Transitions") { drawer = EditorDrawer.TRANSITIONS }
+                    }
+                    ContextState.VIDEO -> {
+                        CSToolChip(CSIcons.Split, "Split") { model.splitAt(model.timecodeMs) }
+                        CSToolChip(CSIcons.Volume, "Volume") { drawer = EditorDrawer.AUDIO }
+                        CSToolChip(CSIcons.Speed, "Speed") { drawer = EditorDrawer.INSPECTOR }
+                        CSToolChip(CSIcons.Keyframe, "Keyframes") { drawer = EditorDrawer.KEYFRAMES }
+                        CSToolChip(CSIcons.Filter, "Effects") { drawer = EditorDrawer.FILTER }
+                        CSToolChip(CSIcons.Transitions, "Transitions") { drawer = EditorDrawer.TRANSITIONS }
+                        CSToolChip(CSIcons.Duplicate, "Duplicate") {
+                            model.selectedClipId?.let { id ->
+                                model.mutate { list ->
+                                    val index = list.indexOfFirst { it.id == id }
+                                    if (index >= 0) {
+                                        list.add(index + 1, list[index].copy(id = System.nanoTime()))
+                                    }
+                                }
+                            }
+                        }
+                        CSToolChip(CSIcons.Delete, "Delete") {
+                            model.selectedClipId?.let { model.delete(it) }
+                        }
+                    }
+                    ContextState.AUDIO -> {
+                        CSToolChip(CSIcons.Volume, "Volume") { drawer = EditorDrawer.AUDIO }
+                        CSToolChip(CSIcons.Split, "Split") { model.splitAt(model.timecodeMs) }
+                        CSToolChip(CSIcons.Delete, "Delete") {
+                            model.selectedClipId?.let { model.delete(it) }
+                        }
+                    }
+                    ContextState.TEXT -> {
+                        CSToolChip(CSIcons.Text, "Edit") { drawer = EditorDrawer.OVERLAY }
+                        CSToolChip(CSIcons.LayerForward, "Layer +") {
+                            model.selectedOverlayId?.let { model.bringOverlayForward(it) }
+                        }
+                        CSToolChip(CSIcons.LayerBackward, "Layer -") {
+                            model.selectedOverlayId?.let { model.sendOverlayBackward(it) }
+                        }
+                        CSToolChip(CSIcons.Trim, "Start here") {
+                            model.selectedOverlay?.let { model.overlayStartAtPlayhead(it) }
+                        }
+                        CSToolChip(CSIcons.Trim, "End here") {
+                            model.selectedOverlay?.let { model.overlayEndAtPlayhead(it) }
+                        }
+                        CSToolChip(CSIcons.Duplicate, "Duplicate") {
+                            model.selectedOverlay?.let { model.duplicateOverlay(it) }
+                        }
+                        CSToolChip(CSIcons.Delete, "Delete") {
+                            model.selectedOverlayId?.let { model.deleteOverlay(it) }
+                        }
+                    }
+                    ContextState.OVERLAY -> {
+                        CSToolChip(CSIcons.LayerForward, "Layer +") {
+                            model.selectedOverlayId?.let { model.bringOverlayForward(it) }
+                        }
+                        CSToolChip(CSIcons.LayerBackward, "Layer -") {
+                            model.selectedOverlayId?.let { model.sendOverlayBackward(it) }
+                        }
+                        CSToolChip(CSIcons.Trim, "Start here") {
+                            model.selectedOverlay?.let { model.overlayStartAtPlayhead(it) }
+                        }
+                        CSToolChip(CSIcons.Trim, "End here") {
+                            model.selectedOverlay?.let { model.overlayEndAtPlayhead(it) }
+                        }
+                        CSToolChip(CSIcons.Duplicate, "Duplicate") {
+                            model.selectedOverlay?.let { model.duplicateOverlay(it) }
+                        }
+                        CSToolChip(CSIcons.Delete, "Delete") {
+                            model.selectedOverlayId?.let { model.deleteOverlay(it) }
+                        }
+                    }
+                }
+            }
+
+            // ── Timeline (fixed height, grows with overlay lanes) ──
+            TimelineView(
+                model = model,
+                onSeek = { ms -> seekTo(ms) },
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
+        // ── Drawer: anchored to the bottom, never pushes the timeline away ──
+        val activeDrawer = drawer
+        if (activeDrawer != null) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = previewFx.scale
-                        scaleY = previewFx.scale
-                        rotationZ = previewFx.rotation
-                        translationX = previewFx.posX * size.width
-                        translationY = previewFx.posY * size.height
-                        alpha = previewFx.opacity
-                    }
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .clickable { drawer = null }
+            )
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState())
+                    .background(CS.SurfaceHigh)
             ) {
-                AndroidView(
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            useController = false
-                            player = playback.player
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                when (activeDrawer) {
+                    EditorDrawer.INSPECTOR -> ClipInspector(model)
+                    EditorDrawer.TEXT -> TextDrawer(model) { drawer = null }
+                    EditorDrawer.FILTER -> FilterDrawer(model) { drawer = null }
+                    EditorDrawer.TRANSITIONS -> TransitionsDrawer(model) { drawer = null }
+                    EditorDrawer.KEYFRAMES -> KeyframeDrawer(model) { drawer = null }
+                    EditorDrawer.AUDIO -> AudioDrawer(model) { drawer = null }
+                    EditorDrawer.STICKER -> StickerDrawer(model) { drawer = null }
+                    EditorDrawer.OVERLAY -> OverlayDrawer(model) { drawer = null }
+                }
             }
-            if (!isPlayingState) {
-                Icon(
-                    CSIcons.Play, "Play",
-                    tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(48.dp)
-                )
-            }
-        }
-
-        // 2. State strip
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("‹", color = CS.TextPrimary, fontSize = 22.sp,
-                modifier = Modifier.clickable { onBack() })
-            Spacer(Modifier.width(12.dp))
-            Icon(CSIcons.Undo, null, tint = if (model.canUndo) CS.TextPrimary else CS.TextSecondary,
-                modifier = Modifier.clickable { model.undo() })
-            Spacer(Modifier.width(8.dp))
-            Icon(CSIcons.Redo, null, tint = if (model.canRedo) CS.TextPrimary else CS.TextSecondary,
-                modifier = Modifier.clickable { model.redo() })
-            Spacer(Modifier.width(16.dp))
-            Icon(CSIcons.Split, "Split at playhead", tint = CS.TextPrimary,
-                modifier = Modifier.clickable { model.splitAt(model.timecodeMs) })
-            Spacer(Modifier.width(12.dp))
-            Icon(CSIcons.Drafts, "Save draft", tint = CS.TextPrimary,
-                modifier = Modifier.clickable {
-                    val name = "Draft ${java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())}"
-                    DraftStore.save(context, model, name)
-                    draftSaved = name
-                })
-            Spacer(Modifier.weight(1f))
-            Text("${model.timecodeText()} / ${model.timecodeText(model.totalMs())}",
-                color = CS.Accent, fontSize = 11.sp)
-            draftSaved?.let {
-                Spacer(Modifier.width(8.dp))
-                Text("Saved ✓", color = CS.Success, fontSize = 11.sp)
-            }
-            Spacer(Modifier.weight(1f))
-            Icon(CSIcons.Export, "Export", tint = CS.Accent,
-                modifier = Modifier.clickable {
-                    if (exportState == null) startExport(context, model, exporter) { exportState = it }
-                })
-        }
-
-        // 3. Timeline — center-fixed playhead over a scrolling film strip
-        TimelineRow(model)
-
-        // 4. Tool dock
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(CS.Surface)
-                .padding(vertical = 8.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Spacer(Modifier.width(8.dp))
-            CSToolChip(CSIcons.Edit, "Edit") {
-                model.selectedClipId ?: model.clips.firstOrNull()?.id?.let(model::select)
-                drawer = EditorDrawer.INSPECTOR
-            }
-            CSToolChip(CSIcons.Text, "Text") { drawer = EditorDrawer.TEXT }
-            CSToolChip(CSIcons.Sticker, "Sticker") { drawer = EditorDrawer.STICKER }
-            CSToolChip(CSIcons.Filter, "Filters") { drawer = EditorDrawer.FILTER }
-            CSToolChip(CSIcons.Transitions, "Transitions") { drawer = EditorDrawer.TRANSITIONS }
-            CSToolChip(CSIcons.Keyframe, "Keyframes") {
-                model.selectedClipId ?: model.clips.firstOrNull()?.id?.let(model::select)
-                drawer = EditorDrawer.KEYFRAMES
-            }
-            CSToolChip(CSIcons.Audio, "Audio") { drawer = EditorDrawer.AUDIO }
-            Spacer(Modifier.width(8.dp))
-        }
-
-        // 5. Drawer layer
-        when (drawer) {
-            EditorDrawer.INSPECTOR -> ClipInspector(model)
-            EditorDrawer.TEXT -> TextDrawer(model) { drawer = null }
-            EditorDrawer.FILTER -> FilterDrawer(model) { drawer = null }
-            EditorDrawer.TRANSITIONS -> TransitionsDrawer(model) { drawer = null }
-            EditorDrawer.KEYFRAMES -> KeyframeDrawer(model) { drawer = null }
-            EditorDrawer.AUDIO -> AudioDrawer(model) { drawer = null }
-            EditorDrawer.STICKER -> StickerDrawer(model) { drawer = null }
-            null -> {}
         }
     }
 
@@ -323,16 +463,20 @@ private fun startExport(
 ) {
     val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
     val out = File(dir, "ClipSpark-${System.currentTimeMillis()}.mp4")
+    val main = android.os.Handler(android.os.Looper.getMainLooper())
     setState(ExportUi())
     exporter.export(
-        model.clips, out,
+        model, out,
         onProgress = {},
         onDone = { file, err ->
-            if (file != null) {
-                saveToGallery(context, file)
-                setState(ExportUi(running = false, donePath = file.path))
-            } else {
-                setState(ExportUi(running = false, error = err))
+            // Transformer reports from its own thread; hop back to the UI one.
+            main.post {
+                if (file != null) {
+                    saveToGallery(context, file)
+                    setState(ExportUi(running = false, donePath = file.path))
+                } else {
+                    setState(ExportUi(running = false, error = err))
+                }
             }
         }
     )
@@ -358,75 +502,5 @@ private fun saveToGallery(context: Context, file: File) {
         resolver.update(uri, values, null, null)
     } catch (e: Exception) {
         // Non-fatal: the file still exists in the app's Movies directory.
-    }
-}
-
-/**
- * Horizontal film strip with a fixed center playhead (CapCut-style).
- * Block width ∝ clip timeline duration; tap selects (again to deselect).
- * Selected clip shows a teal outline + speed badge.
- */
-@Composable
-private fun TimelineRow(model: EditorViewModel) {
-    val pxPerSecond = 48.dp
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(76.dp)
-            .background(CS.BG)
-    ) {
-        // Fixed center playhead
-        Box(
-            Modifier
-                .align(Alignment.Center)
-                .width(2.dp)
-                .fillMaxHeight()
-                .background(CS.Accent)
-        )
-        Row(
-            Modifier
-                .fillMaxSize()
-                .horizontalScroll(rememberScrollState())
-                .padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            model.clips.forEach { clip ->
-                val selected = clip.id == model.selectedClipId
-                Column(
-                    Modifier
-                        .width(((clip.timelineDurationMs / 1000f) * pxPerSecond.value)
-                            .dp.coerceIn(44.dp, 240.dp))
-                        .fillMaxHeight()
-                        .background(
-                            if (selected) CS.SurfaceHigh else CS.Surface,
-                            RoundedCornerShape(8.dp)
-                        )
-                        .border(
-                            if (selected) 2.dp else 1.dp,
-                            if (selected) CS.Accent else CS.Hairline,
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable {
-                            model.select(if (selected) null else clip.id)
-                        },
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        clip.durationText(),
-                        fontSize = 10.sp,
-                        color = CS.TextSecondary,
-                        modifier = Modifier.padding(4.dp)
-                    )
-                    if (clip.speed != 1.0) {
-                        Text("%.2f×".format(clip.speed), fontSize = 9.sp, color = CS.Accent)
-                    }
-                    if (clip.muted) {
-                        Text("🔇", fontSize = 9.sp, color = CS.TextSecondary)
-                    }
-                }
-            }
-            Spacer(Modifier.width(8.dp))
-        }
     }
 }

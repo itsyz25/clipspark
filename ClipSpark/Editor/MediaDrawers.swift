@@ -93,10 +93,10 @@ struct TextDrawer: View {
     private func add() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        var overlay = EditorViewModel.EditorOverlay(kind: .text(trimmed))
-        if let nextColor { overlay.color = nextColor }
+        // addText() gives the new overlay its own timeline window at the
+        // playhead and selects it (one undo step).
+        model.addText(trimmed, color: nextColor)
         draft = ""
-        model.mutateOverlays { $0.append(overlay) } // one undo step
         CSHaptics.done()
     }
 }
@@ -174,6 +174,20 @@ struct FilterDrawer: View {
                         get: { model.look.saturation },
                         set: { v in model.updateLookLive { $0.saturation = v } }
                     ), range: 0...2, format: { String(format: "%.0f%%", $0 * 100) })
+
+                    // Genuine motion blur: Core Image in the shared compositor,
+                    // so the preview and the exported file match exactly.
+                    adjustSlider("Motion blur", value: Binding(
+                        get: { model.look.motionBlur },
+                        set: { v in model.updateLookLive { $0.motionBlur = v } }
+                    ), range: 0...1, format: { $0 < 0.005 ? "Off" : String(format: "%.0f%%", $0 * 100) })
+
+                    if model.look.motionBlur > 0.004 {
+                        adjustSlider("Blur angle", value: Binding(
+                            get: { model.look.motionBlurAngle },
+                            set: { v in model.updateLookLive { $0.motionBlurAngle = v } }
+                        ), range: 0...180, format: { String(format: "%.0f°", $0) })
+                    }
                 }
                 .padding(.horizontal, CSSpacing.l)
                 .onAppear { model.beginLookChange() } // baseline at drawer open
@@ -287,5 +301,183 @@ struct AudioDrawer: View {
                 .foregroundStyle(CSTheme.accent)
                 .frame(width: 44)
         }
+    }
+}
+
+// MARK: - Overlay drawer (edit the selected text/sticker)
+
+/// Everything that belongs to one overlay: content, colour, weight, size,
+/// opacity, duration, layer order. Sliders commit a single undo step per drag.
+struct OverlayDrawer: View {
+    @ObservedObject var model: EditorViewModel
+    var onClose: () -> Void
+
+    private let swatchColors: [Color] = [.white, .black, CSTheme.accent, CSTheme.selection, .red, .blue, .yellow, .green]
+
+    var body: some View {
+        CSDrawerContainer(title: "Overlay", onClose: onClose) {
+            if let overlay = model.selectedOverlay {
+                editor(for: overlay)
+            } else {
+                VStack(alignment: .leading, spacing: CSSpacing.m) {
+                    Text("Select an overlay on the canvas or in the timeline.")
+                        .font(CSType.body)
+                        .foregroundStyle(CSTheme.textSecondary)
+                    // Quick access to every overlay, front-to-back.
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: CSSpacing.s) {
+                            ForEach(model.overlays.reversed()) { item in
+                                Button {
+                                    model.selectOverlay(item)
+                                } label: {
+                                    Text(item.textValue ?? "Sticker")
+                                        .font(CSType.chip)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, CSSpacing.m)
+                                        .padding(.vertical, CSSpacing.xs)
+                                        .background(CSTheme.surface)
+                                        .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, CSSpacing.l)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func editor(for overlay: EditorViewModel.EditorOverlay) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: CSSpacing.m) {
+                if case .text(let text) = overlay.kind {
+                    TextField("Overlay text", text: Binding(
+                        get: { text },
+                        set: { newValue in
+                            var copy = overlay
+                            copy.kind = .text(newValue)
+                            model.updateOverlayLive(copy)
+                        }
+                    ))
+                    .font(CSType.body)
+                    .padding(CSSpacing.m)
+                    .background(CSTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: CSRadius.card / 2))
+                    .onSubmit { model.updateOverlay(overlay) }
+                }
+
+                // Colour + weight
+                HStack(spacing: CSSpacing.s) {
+                    ForEach(swatchColors, id: \.self) { color in
+                        ZStack {
+                            Circle().fill(color)
+                            Circle().strokeBorder(
+                                overlay.color == color ? CSTheme.selection : CSTheme.hairline,
+                                lineWidth: overlay.color == color ? 2 : 1
+                            )
+                        }
+                        .frame(width: 26, height: 26)
+                        .onTapGesture {
+                            var copy = overlay
+                            copy.color = color
+                            model.updateOverlay(copy)
+                        }
+                        .accessibilityLabel("Overlay colour")
+                    }
+                    Spacer()
+                    Button {
+                        var copy = overlay
+                        copy.isBold.toggle()
+                        model.updateOverlay(copy)
+                    } label: {
+                        Text("Bold")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(overlay.isBold ? CSTheme.bg : CSTheme.textPrimary)
+                            .padding(.horizontal, CSSpacing.m)
+                            .padding(.vertical, CSSpacing.xs)
+                            .background(overlay.isBold ? CSTheme.accent : CSTheme.surfaceHigh)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Geometry + timing sliders (one undo step per gesture)
+                overlaySlider("Size", value: Binding(
+                    get: { Double(overlay.fontSize) },
+                    set: { v in
+                        var copy = overlay
+                        copy.fontSize = CGFloat(v)
+                        model.updateOverlayLive(copy)
+                    }
+                ), range: 14...140, format: { String(format: "%.0f", $0) })
+                overlaySlider("Opacity", value: Binding(
+                    get: { overlay.opacity },
+                    set: { v in
+                        var copy = overlay
+                        copy.opacity = v
+                        model.updateOverlayLive(copy)
+                    }
+                ), range: 0.1...1, format: { String(format: "%.0f%%", $0 * 100) })
+                overlaySlider("Rotation", value: Binding(
+                    get: { overlay.rotation },
+                    set: { v in
+                        var copy = overlay
+                        copy.rotation = v
+                        model.updateOverlayLive(copy)
+                    }
+                ), range: -180...180, format: { String(format: "%.0f°", $0) })
+
+                Text(String(format: "Shown %.1fs – %.1fs",
+                            overlay.start, min(overlay.endTime, max(overlay.start + 0.1, model.compositionDuration))))
+                    .font(CSType.timecode)
+                    .foregroundStyle(CSTheme.textSecondary)
+
+                HStack(spacing: CSSpacing.s) {
+                    smallButton("Start here") { model.overlayStartAtPlayhead(overlay) }
+                    smallButton("End here") { model.overlayEndAtPlayhead(overlay) }
+                    smallButton("Layer +") { model.bringOverlayForward(overlay) }
+                    smallButton("Layer -") { model.sendOverlayBackward(overlay) }
+                }
+                HStack(spacing: CSSpacing.s) {
+                    smallButton("Duplicate") { model.duplicateOverlay(overlay) }
+                    smallButton("Delete", danger: true) { model.deleteOverlay(overlay) }
+                }
+            }
+            .padding(.horizontal, CSSpacing.l)
+        }
+        .frame(maxHeight: 220)
+    }
+
+    private func overlaySlider(
+        _ label: String, value: Binding<Double>, range: ClosedRange<Double>,
+        format: @escaping (Double) -> String
+    ) -> some View {
+        HStack(spacing: CSSpacing.m) {
+            Text(label).font(CSType.body).foregroundStyle(CSTheme.textSecondary)
+                .frame(width: 70, alignment: .leading)
+            Slider(value: value, in: range) { editing in
+                if editing { model.beginOverlayDrag() } else { model.finalizeOverlayDrag() }
+            }
+            Text(format(value.wrappedValue))
+                .font(CSType.timecode)
+                .foregroundStyle(CSTheme.accent)
+                .monospacedDigit()
+                .frame(width: 50)
+        }
+    }
+
+    private func smallButton(_ title: String, danger: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(CSType.chip)
+                .foregroundStyle(danger ? CSTheme.danger : CSTheme.textPrimary)
+                .padding(.horizontal, CSSpacing.m)
+                .padding(.vertical, CSSpacing.xs)
+                .background(CSTheme.surface)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

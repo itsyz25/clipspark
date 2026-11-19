@@ -44,6 +44,12 @@ struct SavedOverlay: Codable, Equatable {
     var x: CGFloat
     var y: CGFloat
     var isBold: Bool
+    // Optional so drafts written before multi-overlay support still decode.
+    var scale: CGFloat?
+    var rotation: Double?
+    var opacity: Double?
+    var start: Double?
+    var duration: Double?
 }
 
 struct SavedLook: Codable, Equatable {
@@ -51,6 +57,8 @@ struct SavedLook: Codable, Equatable {
     var brightness: Double
     var contrast: Double
     var saturation: Double
+    var motionBlur: Double?
+    var motionBlurAngle: Double?
 }
 
 struct SavedDraft: Codable, Identifiable, Equatable {
@@ -203,14 +211,21 @@ extension EditorViewModel {
                     fontSize: overlay.fontSize,
                     x: overlay.x,
                     y: overlay.y,
-                    isBold: overlay.isBold
+                    isBold: overlay.isBold,
+                    scale: overlay.scale,
+                    rotation: overlay.rotation,
+                    opacity: overlay.opacity,
+                    start: overlay.start,
+                    duration: overlay.duration
                 )
             },
             look: SavedLook(
                 filter: look.filter.rawValue,
                 brightness: look.brightness,
                 contrast: look.contrast,
-                saturation: look.saturation
+                saturation: look.saturation,
+                motionBlur: look.motionBlur,
+                motionBlurAngle: look.motionBlurAngle
             )
         )
         if let id { draft.id = id }
@@ -235,20 +250,30 @@ extension EditorViewModel {
             var overlay: EditorOverlay
             switch saved.kind {
             case .text: overlay = EditorOverlay(kind: .text(saved.value))
-            case .sticker: overlay = EditorOverlay(kind: .sticker(saved.value))
+            case .sticker: overlay = EditorOverlay(kind: .sticker(saved.value), fontSize: 60)
             }
             overlay.color = ColorHex.decode(saved.colorHex)
-            overlay.fontSize = saved.fontSize
+            // Legacy drafts were authored before the height-relative type
+            // scale existed; bump their size so they look the same as before.
+            let isLegacy = saved.scale == nil
+            overlay.fontSize = isLegacy ? saved.fontSize * 1.7 : saved.fontSize
             overlay.x = saved.x
             overlay.y = saved.y
             overlay.isBold = saved.isBold
+            overlay.scale = saved.scale ?? 1
+            overlay.rotation = saved.rotation ?? 0
+            overlay.opacity = saved.opacity ?? 1
+            overlay.start = saved.start ?? 0
+            overlay.duration = saved.duration
             return overlay
         }
         look = Look(
             filter: CSFilter(rawValue: draft.look.filter) ?? .none,
             brightness: draft.look.brightness,
             contrast: draft.look.contrast,
-            saturation: draft.look.saturation
+            saturation: draft.look.saturation,
+            motionBlur: draft.look.motionBlur ?? 0,
+            motionBlurAngle: draft.look.motionBlurAngle ?? 0
         )
         rebuildComposition()
         installTimeObserver()

@@ -133,7 +133,27 @@ final class TransitionCompositor: NSObject, AVVideoCompositing {
             return
         }
 
-        finish(with: finalImage, request: request)
+        // Shutter-style motion blur, applied once to the composited frame so
+        // transitions/keyframes blur exactly like a real camera would.
+        let final = Self.applyMotionBlur(finalImage, look: config.look, size: request.renderContext.size)
+        finish(with: final, request: request)
+    }
+
+    /// Genuine adjustable motion blur (Core Image `CIMotionBlur`).
+    /// Radius is expressed as a fraction of the render height so the preview
+    /// (720-ish px) and the export (up to 4K) look identical.
+    static func applyMotionBlur(
+        _ image: CIImage, look: EditorViewModel.Look, size: CGSize
+    ) -> CIImage {
+        let strength = max(0, min(1, look.motionBlur))
+        guard strength > 0.001 else { return image }
+        let radius = Double(size.height) * 0.02 * strength
+        guard radius > 0.3 else { return image }
+        let blurred = image.clampedToExtent().applyingFilter("CIMotionBlur", parameters: [
+            kCIInputRadiusKey: radius,
+            kCIInputAngleKey: look.motionBlurAngle * .pi / 180,
+        ])
+        return blurred.cropped(to: image.extent)
     }
 
     /// Keyframed clip pass: scale / rotation / position / opacity evaluated

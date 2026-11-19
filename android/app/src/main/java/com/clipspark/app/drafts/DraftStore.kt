@@ -6,6 +6,7 @@ import com.clipspark.app.editor.CSTransition
 import com.clipspark.app.editor.EditorOverlay
 import com.clipspark.app.editor.EditorViewModel
 import com.clipspark.app.editor.Keyframe
+import com.clipspark.app.editor.Look
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -44,26 +45,30 @@ object DraftStore {
         json.put("clips", clips)
         val overlays = JSONArray()
         for (o in model.overlays) {
-            o.text?.let { t ->
-                overlays.put(
-                    JSONObject()
-                        .put("text", t)
-                        .put("x", o.x.toDouble())
-                        .put("y", o.y.toDouble())
-                        .put("size", o.fontSize.toDouble())
-                )
-            }
-            o.sticker?.let { s ->
-                overlays.put(
-                    JSONObject()
-                        .put("sticker", s)
-                        .put("x", o.x.toDouble())
-                        .put("y", o.y.toDouble())
-                        .put("size", o.fontSize.toDouble())
-                )
-            }
+            val obj = JSONObject()
+                .put("x", o.x.toDouble())
+                .put("y", o.y.toDouble())
+                .put("size", o.fontSize.toDouble())
+                .put("scale", o.scale.toDouble())
+                .put("rotation", o.rotation.toDouble())
+                .put("opacity", o.opacity.toDouble())
+                .put("start", o.startMs)
+                .put("dur", o.durationMs ?: -1L)
+                .put("color", o.colorArgb)
+            o.text?.let { obj.put("text", it) }
+            o.sticker?.let { obj.put("sticker", it) }
+            overlays.put(obj)
         }
         json.put("overlays", overlays)
+        json.put(
+            "look",
+            JSONObject()
+                .put("brightness", model.look.brightness.toDouble())
+                .put("contrast", model.look.contrast.toDouble())
+                .put("saturation", model.look.saturation.toDouble())
+                .put("motionBlur", model.look.motionBlur.toDouble())
+                .put("motionBlurAngle", model.look.motionBlurAngle.toDouble())
+        )
         return try {
             File(dir(context), "$name.json").writeText(json.toString())
             true
@@ -122,27 +127,39 @@ object DraftStore {
             val overlays = mutableListOf<EditorOverlay>()
             for (i in 0 until overlaysArray.length()) {
                 val o = overlaysArray.getJSONObject(i)
+                // Fields added with multi-overlay support are optional so
+                // drafts saved by older versions still decode.
+                val legacy = !o.has("scale")
+                val rawSize = o.getDouble("size").toFloat()
+                val durationMs = if (o.has("dur") && o.getLong("dur") >= 0) o.getLong("dur") else null
                 overlays.add(
-                    if (o.has("sticker")) {
-                        EditorOverlay(
-                            id = id++,
-                            sticker = o.getString("sticker"),
-                            x = o.getDouble("x").toFloat(),
-                            y = o.getDouble("y").toFloat(),
-                            fontSize = o.getDouble("size").toFloat(),
-                        )
-                    } else {
-                        EditorOverlay(
-                            id = id++,
-                            text = o.getString("text"),
-                            x = o.getDouble("x").toFloat(),
-                            y = o.getDouble("y").toFloat(),
-                            fontSize = o.getDouble("size").toFloat(),
-                        )
-                    }
+                    EditorOverlay(
+                        id = id++,
+                        text = if (o.has("text")) o.getString("text") else null,
+                        sticker = if (o.has("sticker")) o.getString("sticker") else null,
+                        colorArgb = if (o.has("color")) o.getLong("color") else 0xFFFFFFFF,
+                        fontSize = if (legacy) rawSize * 1.7f else rawSize,
+                        x = o.getDouble("x").toFloat(),
+                        y = o.getDouble("y").toFloat(),
+                        scale = if (o.has("scale")) o.getDouble("scale").toFloat() else 1f,
+                        rotation = if (o.has("rotation")) o.getDouble("rotation").toFloat() else 0f,
+                        opacity = if (o.has("opacity")) o.getDouble("opacity").toFloat() else 1f,
+                        startMs = if (o.has("start")) o.getLong("start") else 0L,
+                        durationMs = durationMs,
+                    )
                 )
             }
-            EditorViewModel().also { it.loadDraft(clips, overlays) }
+            val restoredLook = if (json.has("look")) {
+                val l = json.getJSONObject("look")
+                Look(
+                    brightness = l.optDouble("brightness", 0.0).toFloat(),
+                    contrast = l.optDouble("contrast", 1.0).toFloat(),
+                    saturation = l.optDouble("saturation", 1.0).toFloat(),
+                    motionBlur = l.optDouble("motionBlur", 0.0).toFloat(),
+                    motionBlurAngle = l.optDouble("motionBlurAngle", 0.0).toFloat(),
+                )
+            } else null
+            EditorViewModel().also { it.loadDraft(clips, overlays, restoredLook) }
         } catch (e: Exception) {
             null
         }

@@ -62,7 +62,7 @@ fun TextDrawer(model: EditorViewModel, onClose: () -> Unit) {
         )
         Row(Modifier.padding(horizontal = 16.dp)) {
             CSPrimaryButton("Add", CSIcons.Text) {
-                if (draft.isNotBlank()) { model.addText(draft); draft = "" }
+                if (draft.isNotBlank()) { model.addText(draft.trim()); draft = "" }
             }
         }
     }
@@ -85,7 +85,7 @@ fun StickerDrawer(model: EditorViewModel, onClose: () -> Unit) {
                 }
             }
         }
-        Text("Stickers render in export in a later update; they preview on the clip block list today.",
+        Text("Stickers are baked into the export too — they render on the canvas here and in the saved video.",
             fontSize = 11.sp, color = CS.TextSecondary,
             modifier = Modifier.padding(16.dp))
     }
@@ -94,11 +94,26 @@ fun StickerDrawer(model: EditorViewModel, onClose: () -> Unit) {
 @Composable
 fun FilterDrawer(model: EditorViewModel, onClose: () -> Unit) {
     DrawerShell("Filters & Adjust", onClose) {
-        Column(Modifier.padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
-            LabeledSlider("Brightness", model.look.brightness, -0.2f..0.2f) { model.look.brightness = it }
-            LabeledSlider("Contrast", model.look.contrast, 0.5f..1.5f) { model.look.contrast = it }
-            LabeledSlider("Saturation", model.look.saturation, 0f..2f) { model.look.saturation = it }
-            Text("Applied live on-device via Media3 GL effects.", fontSize = 11.sp, color = CS.TextSecondary)
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            LabeledSlider("Brightness", model.look.brightness, -0.2f..0.2f) {
+                model.updateLookLive { l -> l.copy(brightness = it) }
+            }
+            LabeledSlider("Contrast", model.look.contrast, 0.5f..1.5f) {
+                model.updateLookLive { l -> l.copy(contrast = it) }
+            }
+            LabeledSlider("Saturation", model.look.saturation, 0f..2f) {
+                model.updateLookLive { l -> l.copy(saturation = it) }
+            }
+            LabeledSlider("Motion blur", model.look.motionBlur, 0f..1f) {
+                model.updateLookLive { l -> l.copy(motionBlur = it) }
+            }
+            if (model.look.motionBlur > 0.005f) {
+                LabeledSlider("Blur angle", model.look.motionBlurAngle, 0f..180f) {
+                    model.updateLookLive { l -> l.copy(motionBlurAngle = it) }
+                }
+            }
+            Text("GPU effects shared with the exporter: what you see is what gets encoded.",
+                fontSize = 11.sp, color = CS.TextSecondary)
         }
     }
 }
@@ -193,6 +208,165 @@ private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPoin
 private fun Spacer(width: androidx.compose.ui.unit.Dp) =
     androidx.compose.foundation.layout.Spacer(Modifier.width(width))
 
+
+// MARK: - Keyframe drawer (mirrors iOS KeyframeDrawer.swift)
+
+@Composable
+fun OverlayDrawer(model: EditorViewModel, onClose: () -> Unit) {
+    val overlay = model.selectedOverlay
+    DrawerShell("Overlay", onClose) {
+        if (overlay == null) {
+            Text(
+                "Select a text or sticker on the canvas or in the timeline.",
+                fontSize = 12.sp, color = CS.TextSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            LazyRow(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(model.overlays.asReversed()) { o ->
+                    Text(
+                        o.text ?: "Sticker", fontSize = 12.sp,
+                        color = if (o.id == model.selectedOverlayId) CS.BG else CS.TextPrimary,
+                        modifier = Modifier
+                            .clickable { model.selectOverlay(o.id) }
+                            .background(
+                                if (o.id == model.selectedOverlayId) CS.Accent else CS.Surface,
+                                RoundedCornerShape(20.dp)
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                }
+            }
+            return@DrawerShell
+        }
+
+        Column(Modifier.padding(vertical = 4.dp)) {
+            if (overlay.text != null) {
+                var draft by remember(overlay.id) { mutableStateOf(overlay.text ?: "") }
+                Row(
+                    Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BasicTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = CS.TextPrimary, fontSize = 15.sp
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(CS.Surface, RoundedCornerShape(10.dp))
+                            .padding(12.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    CSPrimaryButton("Apply") {
+                        model.updateOverlay(overlay.copy(text = draft))
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // Colour swatches
+            val swatches = listOf(
+                0xFFFFFFFF, 0xFF000000, 0xFF00E0C6, 0xFFFFD60A,
+                0xFFFF453A, 0xFF0A84FF, 0xFFFFD60A, 0xFF32D74B,
+            )
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                swatches.forEach { argb ->
+                    Box(
+                        Modifier
+                            .size(24.dp)
+                            .background(Color(argb), RoundedCornerShape(12.dp))
+                            .clickable { model.updateOverlay(overlay.copy(colorArgb = argb)) }
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            OverlaySlider(
+                "Size", overlay.fontSize, 14f..140f,
+                onChange = { v -> model.updateOverlayLive(overlay.copy(fontSize = v)) },
+                onFinished = { model.endOverlayDrag() },
+            )
+            OverlaySlider(
+                "Opacity", overlay.opacity, 0.1f..1f,
+                onChange = { v -> model.updateOverlayLive(overlay.copy(opacity = v)) },
+                onFinished = { model.endOverlayDrag() },
+            )
+            OverlaySlider(
+                "Rotation", overlay.rotation, -180f..180f,
+                onChange = { v -> model.updateOverlayLive(overlay.copy(rotation = v)) },
+                onFinished = { model.endOverlayDrag() },
+            )
+
+            Text(
+                "Shown %.1fs – %.1fs".format(
+                    overlay.startMs / 1000.0,
+                    minOf(overlay.endMs, model.totalMs().coerceAtLeast(1L)) / 1000.0
+                ),
+                fontSize = 11.sp, color = CS.TextSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                DrawerAction("Start here") { model.overlayStartAtPlayhead(overlay) }
+                DrawerAction("End here") { model.overlayEndAtPlayhead(overlay) }
+                DrawerAction("Layer +") { model.bringOverlayForward(overlay.id) }
+                DrawerAction("Layer -") { model.sendOverlayBackward(overlay.id) }
+            }
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                DrawerAction("Duplicate") { model.duplicateOverlay(overlay) }
+                DrawerAction("Delete", danger = true) { model.deleteOverlay(overlay.id) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlaySlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit,
+    onFinished: () -> Unit,
+) {
+    Row(
+        Modifier.padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 12.sp, color = CS.TextSecondary, modifier = Modifier.width(66.dp))
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            onValueChangeFinished = onFinished,
+            valueRange = range,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun DrawerAction(label: String, danger: Boolean = false, action: () -> Unit) {
+    Text(
+        label, fontSize = 12.sp,
+        color = if (danger) CS.Danger else CS.TextPrimary,
+        modifier = Modifier
+            .clickable { action() }
+            .background(CS.Surface, RoundedCornerShape(20.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    )
+}
 
 // MARK: - Keyframe drawer (mirrors iOS KeyframeDrawer.swift)
 
