@@ -323,8 +323,6 @@ class EditorViewModel : ViewModel() {
 
     // MARK: - Look (filters / adjust / motion blur)
 
-    fun setLook(newLook: Look) { look = newLook }
-
     fun updateLookLive(transform: (Look) -> Look) { look = transform(look) }
 
     // MARK: - Overlays (multiple, stacked, independently timed)

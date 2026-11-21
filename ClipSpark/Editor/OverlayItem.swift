@@ -159,7 +159,7 @@ struct OverlayItem: View {
 
     // MARK: - Gestures
 
-    private var moveGesture: some View {
+    private var moveGesture: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
                 if gestureStart == nil {
@@ -180,7 +180,7 @@ struct OverlayItem: View {
             }
     }
 
-    private var pinchGesture: some View {
+    private var pinchGesture: some Gesture {
         MagnificationGesture()
             .onChanged { value in
                 if gestureStart == nil {
