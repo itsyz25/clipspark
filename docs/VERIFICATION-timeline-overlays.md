@@ -29,9 +29,10 @@ marks were copied.
 - iOS (IPA) and Android (APK): GitHub Actions, workflow `build.yml`, version bumped to
   **1.1.0** (`MARKETING_VERSION` / `versionName`), `CURRENT_PROJECT_VERSION = 3`,
   `versionCode = 3`.
-- Run IDs and results are appended in §7 once the CI run for this commit finishes;
+- Commit `1850933` (after the two compile fixes below). CI run IDs and results in §7;
   the workflow is the only compiler available on this machine (no local Xcode /
   Android SDK), exactly as in earlier units.
+- **PASS** — IPA ✅, APK ✅.
 
 ## 3. Offline audit
 
@@ -47,7 +48,7 @@ Grep over `android/app/src` and `ClipSpark/` for `java.net`, `okhttp`,
 
 **Verdict:** offline-only preserved. ✅
 
-## 4. Mistake ledger (found and fixed before push)
+## 4. Mistake ledger (found and fixed during this unit, pre-push or CI round 1)
 
 | # | Defect | Where | Fix |
 |---|---|---|---|
@@ -61,6 +62,8 @@ Grep over `android/app/src` and `ClipSpark/` for `java.net`, `okhttp`,
 | 8 | Clip lists were mutated in place (trim/speed), so `mutableStateOf` saw an equal list and skipped recomposition | `EditorViewModel.kt` (Android) | `neverEqualPolicy()` on `clips` and `overlays` |
 | 9 | Overlay gesture never consumed the down event, so the canvas tap handler could also fire and clear the selection | `OverlayLayer.kt` | Consume the first down; canvas clipped with `clipToBounds()` |
 | 10 | Legacy drafts with no `scale` field would render tiny text after the reference-size change | both `DraftStore`s | Detect missing `scale`, multiply the saved size by 1.7 |
+| 11 | `moveGesture` / `pinchGesture` declared `some View` although they return `Gesture` (CI round 1, iOS) | `OverlayItem.swift` | `some Gesture` |
+| 12 | `fun setLook(Look)` and `var look` generate the same JVM setter `setLook(Look)` → platform declaration clash (CI round 1, Android) | `EditorViewModel.kt` | Removed the unused function; `updateLookLive` / direct assignment cover the call sites |
 
 ## 5. What is genuinely implemented vs. still limited
 
@@ -110,4 +113,16 @@ Grep over `android/app/src` and `ClipSpark/` for `java.net`, `okhttp`,
 ## 7. CI result log
 
 - Baseline before this unit: `241541e` (v1.0.1, both platforms green).
-- This unit: commit hash + run IDs appended after the workflow completes.
+- Unit commit: `59f4766` — CI round 1 **failed on both platforms**; both were
+  genuine compile errors introduced by this unit:
+  - iOS `OverlayItem.swift`: `moveGesture` / `pinchGesture` were declared
+    `some View` but return a `Gesture` — changed to `some Gesture`.
+  - Android `EditorViewModel.kt`: `fun setLook(Look)` collided with the JVM
+    setter of the `look` property (`setLook`) — the unused function was removed.
+- Fix commit: `1850933` — both workflows **green**:
+  - `Build ClipSpark IPA` — run [44894983947](https://github.com/itsyz25/clipspark/actions/runs/44894983947) → **success**
+  - `Build ClipSpark APK` — run [44894983840](https://github.com/itsyz25/clipspark/actions/runs/44894983840) → **success**
+- Artifacts published as release **v1.1.0** (`ClipSpark-debug.apk`, `ClipSpark-unsigned.ipa`).
+- Compile-only verification. Runtime behaviour (GLSL blur program, `PlayerView`
+  + `setVideoEffects`, pinch feel, export render) still needs the owner to
+  sideload and walk §6 — no device/emulator is available here.
